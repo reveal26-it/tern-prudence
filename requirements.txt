@@ -4,3 +4,4 @@ groq
 pydantic
 sqlalchemy
 psycopg2-binary
+sse-starlette
