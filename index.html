@@ -288,7 +288,10 @@
 
         window.onload = () => {
             loadChatList();
-            startNewChat(); 
+            // Only clear the screen if there is no active chat
+            if (!currentChatId) {
+                chatContainer.innerHTML = '<div class="message prudence">Hey there! I\'m Prudence. What are we building today?</div>';
+            }
         };
 
         function toggleSidebar() {
@@ -305,7 +308,6 @@
                     const div = document.createElement('div');
                     div.className = `chat-item ${chat.id === currentChatId ? 'active' : ''}`;
                     
-                    // Title
                     const titleSpan = document.createElement('span');
                     titleSpan.className = 'chat-title';
                     titleSpan.textContent = chat.title;
@@ -316,12 +318,10 @@
                         renameChat(chat.id, chat.title);
                     };
                     
-                    // Options Button
                     const optBtn = document.createElement('button');
                     optBtn.className = 'options-btn';
                     optBtn.innerHTML = '⋮';
                     
-                    // Dropdown Menu
                     const dropdown = document.createElement('div');
                     dropdown.className = 'dropdown';
                     
@@ -341,7 +341,6 @@
                     div.appendChild(optBtn);
                     div.appendChild(dropdown);
 
-                    // Click logic
                     div.onclick = () => loadChat(chat.id);
                     optBtn.onclick = (e) => {
                         e.stopPropagation();
@@ -354,7 +353,6 @@
             } catch (e) { console.error("Could not load chats", e); }
         }
 
-        // Close dropdowns when clicking outside
         document.addEventListener('click', () => {
             document.querySelectorAll('.dropdown').forEach(d => d.classList.remove('show'));
         });
