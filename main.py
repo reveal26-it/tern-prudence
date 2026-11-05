@@ -9,10 +9,11 @@ import datetime
 import uuid
 
 # ============================================
-# 1. DATABASE SETUP
+# 1. DATABASE SETUP (SUPABASE POSTGRES)
 # ============================================
-SQLALCHEMY_DATABASE_URL = "sqlite:///./prudence.db"
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+DATABASE_URL = "postgresql://postgres.wefbjzxefshopfkjkckj:YOUR_SUPABASE_PASSWORD@aws-1-eu-central-1.pooler.supabase.com:5432/postgres"
+
+engine = create_engine(DATABASE_URL + "?sslmode=require", pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -24,7 +25,7 @@ class DBUser(Base):
 
 class DBChat(Base):
     __tablename__ = "chats"
-    id = Column(String, primary_key=True, index=True) # UUID
+    id = Column(String, primary_key=True, index=True)
     session_id = Column(String, index=True)
     title = Column(String, default="New Conversation")
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
@@ -106,46 +107,34 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     if not client:
         raise HTTPException(status_code=500, detail="API key not configured.")
     
-    # 1. Get or create User
     user = db.query(DBUser).filter(DBUser.session_id == request.session_id).first()
     if not user:
         user = DBUser(session_id=request.session_id, tiredness=0)
         db.add(user)
         db.commit()
 
-    # 2. Update tiredness
     user.tiredness = min(100, user.tiredness + 2)
     db.commit()
 
-    # 3. Get or create Chat with smart title
     chat_id = request.chat_id
     if not chat_id:
         chat_id = str(uuid.uuid4())
-        
         stop_words = ["the", "this", "that", "chat", "title", "name", "call", "a", "an", "is", "can", "you", "to", "it", "let's"]
         words = request.message.replace("'", "").replace('"', "").split()
         notable_words = [w for w in words if w.lower() not in stop_words]
-        
-        if notable_words:
-            title = notable_words[0].capitalize() + " Conversation"
-        else:
-            title = "New Conversation"
-            
+        title = notable_words[0].capitalize() + " Conversation" if notable_words else "New Conversation"
         new_chat = DBChat(id=chat_id, session_id=request.session_id, title=title)
         db.add(new_chat)
         db.commit()
 
-    # 4. Save user message
     db.add(DBMessage(chat_id=chat_id, role="user", content=request.message))
     db.commit()
 
-    # 5. Build context
     past_msgs = db.query(DBMessage).filter(DBMessage.chat_id == chat_id).order_by(DBMessage.timestamp).all()
     context = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for m in past_msgs[-10:]:
+    for m in past_msgs[-40:]:
         context.append({"role": m.role, "content": m.content})
 
-    # 6. Call Groq
     try:
         response = client.chat.completions.create(
             model="openai/gpt-oss-120b",
@@ -154,8 +143,6 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
             temperature=0.7
         )
         reply = response.choices[0].message.content
-        
-        # 7. Save AI reply
         db.add(DBMessage(chat_id=chat_id, role="assistant", content=reply))
         db.commit()
     except Exception as e:
