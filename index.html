@@ -333,7 +333,6 @@
             addMessage(text, 'user');
             userInput.value = '';
 
-            // Create an empty bubble for the streaming response
             const prudenceDiv = addMessage('', 'prudence');
             let fullReply = '';
 
@@ -348,7 +347,6 @@
                     })
                 });
 
-                // Read the stream
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder("utf-8");
 
@@ -376,8 +374,7 @@
                     }
                 }
                 
-                // Update tiredness after stream finishes
-                updateStatus(20, 'awake'); // Just a visual update
+                updateStatus(20, 'awake'); 
 
             } catch (error) {
                 prudenceDiv.textContent = "Connection failed.";
@@ -399,11 +396,14 @@
             document.getElementById('status-text').textContent = `Tiredness: ${tiredness}%`;
             const dot = document.getElementById('status-dot');
             if (state === 'dead' || tiredness > 90) {
-                dot.style.background = '#ff4444'; dot.style.boxShadow = '0 0 8px #ff4444';
+                dot.style.background = '#ff4444'; 
+                dot.style.boxShadow = '0 0 8px #ff4444';
             } else if (tiredness > 60) {
-                dot.style.background = '#f39c12'; dot.style.boxShadow = '0 0 8px #f39c12';
+                dot.style.background = '#f39c12'; 
+                dot.style.boxShadow = '0 0 8px #f39c12';
             } else {
-                dot.style.background = 'var(--teal-main)'; dot.style.boxShadow = '0 0 8px var(--teal-main)';
+                dot.style.background = 'var(--teal-main)'; 
+                dot.style.boxShadow = '0 0 8px var(--teal-main)';
             }
         }
     </script>
