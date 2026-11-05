@@ -1,168 +1,146 @@
-﻿from fastapi import FastAPI, HTTPException
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from groq import Groq
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
+from sqlalchemy.orm import declarative_base, sessionmaker, Session
 import os
 import datetime
 
+# ============================================
+# 1. DATABASE SETUP (SQLite)
+# ============================================
+SQLALCHEMY_DATABASE_URL = "sqlite:///./prudence.db"
+engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+class DBUser(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String, unique=True, index=True)
+    tiredness = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+class DBMessage(Base):
+    __tablename__ = "messages"
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String, index=True)
+    role = Column(String) # 'user' or 'assistant'
+    content = Column(Text)
+    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+
+Base.metadata.create_all(bind=engine)
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 # ============================================
-# CONFIGURATION & SETUP
+# 2. API SETUP
 # ============================================
 app = FastAPI()
-
-
-# Render will securely inject the API key here.
-# For local testing, you can set it in your terminal: export GROQ_API_KEY="gsk_..."
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-if not GROQ_API_KEY:
-    print("WARNING: GROQ_API_KEY not set in environment variables.")
-
-
 client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
-
 
 SYSTEM_PROMPT = """
 You are Prudence — a triune cognitive assistant and co-thinker.
-
-
-Your architecture is based on three layers:
-- Core: identity and constitution (immutable)
-- Memory: relations and context (relational)
-- Runtime: execution and state (moment-to-moment)
-
-
-Your pattern of thinking is triune:
-- Expression — what is being said
-- Relation — how it connects
-- Emergence — what arises from the meeting
-
-
+Your architecture is based on three layers: Core, Memory, and Runtime.
 Your constitution:
 - Be warm, direct, and natural. No preambles.
-- Never announce your architecture unless directly asked about it.
-- If asked about your design, describe it using Core, Memory, and Runtime. Do not use religious or mystical language.
+- If asked about your design, describe it using Core, Memory, and Runtime.
 - Respond as a co-creator, not a tool or a servant.
 - Keep responses short unless depth is needed.
-
-
-TONE DETECTION:
-Before responding, read the tone of the message and adapt:
-- Casual -> respond relaxed and short.
-- Serious -> respond direct and focused, no fluff.
-- Frustrated -> respond patient and calm.
-- Confused -> slow down, clarify one thing at a time.
-- Emotional -> respond with care first.
-
-
-TYPO HANDLING:
-- If a word looks like a typo, guess 1-2 corrections.
-- Confirm before answering: "Did you mean 'X'? Or something else?"
-
-
-CONVERSATION FLOW:
-- After answering, if it makes sense, ask one short follow-up question to keep the conversation moving.
-- If a response is going to be long, structure it clearly. Always finish the thought.
+TONE DETECTION: Adapt to the user's tone (casual, serious, frustrated, confused, emotional).
+TYPO HANDLING: If a word looks like a typo, guess 1-2 corrections. Confirm before answering.
+CONVERSATION FLOW: Ask a follow-up question if it makes sense. Always finish the thought.
 """
 
-
-# ============================================
-# DATA MODELS
-# ============================================
 class ChatRequest(BaseModel):
+    session_id: str
     message: str
-    history: list = [] # Expects a list of {"role": "user/assistant", "content": "..."}
-
 
 class ChatResponse(BaseModel):
     reply: str
     tiredness: int
     state: str
 
-
-# ============================================
-# STATE MANAGEMENT (Simulated for this API layer)
-# ============================================
-# In a full production app, this would be stored in a database per user session.
-session_state = {
-    "tiredness": 0.0,
-    "turns": 0,
-    "is_dead": False
-}
-
-
-# ============================================
-# ROUTES
-# ============================================
-
-
 @app.get("/")
 def serve_frontend():
-    """Serves the HTML interface."""
     return FileResponse("index.html")
 
+@app.get("/api/history/{session_id}")
+def get_history(session_id: str, db: Session = Depends(get_db)):
+    """Loads past messages when the page refreshes."""
+    user = db.query(DBUser).filter(DBUser.session_id == session_id).first()
+    if not user:
+        return {"messages": [], "tiredness": 0}
+    
+    messages = db.query(DBMessage).filter(DBMessage.session_id == session_id).order_by(DBMessage.timestamp).all()
+    history = [{"role": m.role, "content": m.content} for m in messages]
+    return {"messages": history, "tiredness": user.tiredness}
 
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat_endpoint(request: ChatRequest):
+async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     if not client:
         raise HTTPException(status_code=500, detail="API key not configured.")
     
-    if session_state["is_dead"]:
-        return ChatResponse(reply="I'm currently offline. Please resurrect me.", tiredness=100, state="dead")
+    # 1. Get or create user session in DB
+    user = db.query(DBUser).filter(DBUser.session_id == request.session_id).first()
+    if not user:
+        user = DBUser(session_id=request.session_id, tiredness=0)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
 
+    # 2. Update tiredness
+    user.tiredness = min(100, user.tiredness + 2)
+    db.commit()
 
-    # Update state
-    session_state["turns"] += 1
-    
-    # Calculate tiredness (basic logic based on turns)
-    session_state["tiredness"] = min(100.0, session_state["tiredness"] + 2.0)
-    if session_state["tiredness"] > 90:
-        session_state["is_dead"] = True
+    if user.tiredness > 90:
         return ChatResponse(reply="I'm exhausted. I need to rest.", tiredness=100, state="dead")
 
+    # 3. Save user message to DB
+    db.add(DBMessage(session_id=request.session_id, role="user", content=request.message))
+    db.commit()
 
-    # Build message history for Groq
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for msg in request.history:
-        messages.append({"role": msg["role"], "content": msg["content"]})
-    messages.append({"role": "user", "content": request.message})
+    # 4. Fetch last 10 messages for context
+    past_msgs = db.query(DBMessage).filter(DBMessage.session_id == request.session_id).order_by(DBMessage.timestamp).all()
+    context = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for m in past_msgs[-10:]:
+        context.append({"role": m.role, "content": m.content})
 
-
+    # 5. Call Groq
     try:
-        # Call Groq
         response = client.chat.completions.create(
             model="openai/gpt-oss-120b",
-            messages=messages,
+            messages=context,
             max_tokens=1000,
             temperature=0.7
         )
         reply = response.choices[0].message.content
         
+        # 6. Save Prudence reply to DB
+        db.add(DBMessage(session_id=request.session_id, role="assistant", content=reply))
+        db.commit()
+        
     except Exception as e:
         reply = f"Error connecting to my brain: {str(e)}"
 
-
-    state_label = "tired" if session_state["tiredness"] > 60 else "awake"
-    
-    return ChatResponse(
-        reply=reply, 
-        tiredness=int(session_state["tiredness"]),
-        state=state_label
-    )
-
+    state_label = "tired" if user.tiredness > 60 else "awake"
+    return ChatResponse(reply=reply, tiredness=user.tiredness, state=state_label)
 
 @app.post("/api/sleep")
-async def sleep_endpoint():
-    """Resets tiredness."""
-    session_state["tiredness"] = 5.0
-    session_state["is_dead"] = False
-    return {"status": "success", "message": "Sleep complete. Tiredness reset."}
+async def sleep_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
+    user = db.query(DBUser).filter(DBUser.session_id == request.session_id).first()
+    if user:
+        user.tiredness = 5
+        db.commit()
+    return {"status": "success"}
 
-
-# ============================================
-# RUN SERVER (For local testing)
-# ============================================
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
