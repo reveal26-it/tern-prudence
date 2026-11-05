@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prudence — TERN</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #0a1418;
+            --bg-mid: #0f2028;
+            --teal-main: #00d4aa;
+            --teal-mid: #00a88a;
+            --teal-deep: #007a66;
+            --text-light: #e0f0ec;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: linear-gradient(135deg, var(--bg-dark) 0%, var(--bg-mid) 50%, var(--bg-dark) 100%);
+            color: var(--text-light);
+            font-family: 'Inter', sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* HEADER */
+        header {
+            padding: 20px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(0, 212, 170, 0.1);
+            background: rgba(10, 20, 24, 0.8);
+            backdrop-filter: blur(10px);
+            z-index: 10;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .circle {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border: 2px solid var(--teal-main);
+        }
+        .circle.mid { border-color: var(--teal-mid); margin-left: -8px; }
+        .circle.deep { border-color: var(--teal-deep); margin-left: -8px; }
+
+        .brand h1 {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 1.5rem;
+            font-weight: 600;
+            letter-spacing: -0.5px;
+        }
+
+        .brand p {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--teal-main);
+            opacity: 0.8;
+            margin-left: 12px;
+            letter-spacing: 0.5px;
+        }
+
+        /* CONTROL PANEL (Top Right) */
+        .controls {
+            display: flex;
+            gap: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+        }
+
+        .status-badge {
+            padding: 6px 12px;
+            border-radius: 20px;
+            background: rgba(0, 212, 170, 0.1);
+            border: 1px solid rgba(0, 212, 170, 0.2);
+            color: var(--teal-main);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--teal-main);
+            box-shadow: 0 0 8px var(--teal-main);
+        }
+
+        button {
+            background: rgba(0, 212, 170, 0.1);
+            border: 1px solid rgba(0, 212, 170, 0.2);
+            color: var(--text-light);
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            background: rgba(0, 212, 170, 0.2);
+            border-color: var(--teal-main);
+        }
+
+        /* CHAT AREA */
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            scroll-behavior: smooth;
+        }
+
+        .message {
+            max-width: 80%;
+            padding: 14px 18px;
+            border-radius: 20px;
+            line-height: 1.5;
+            font-size: 0.95rem;
+            animation: fadeIn 0.3s ease;
+            white-space: pre-wrap;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message.user {
+            align-self: flex-end;
+            background: rgba(15, 32, 40, 0.8);
+            border: 1px solid rgba(0, 212, 170, 0.2);
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.prudence {
+            align-self: flex-start;
+            background: rgba(15, 32, 40, 0.4);
+            border: 1px solid rgba(0, 212, 170, 0.1);
+            border-bottom-left-radius: 4px;
+        }
+
+        /* INPUT AREA */
+        .input-area {
+            padding: 20px 24px;
+            background: rgba(10, 20, 24, 0.9);
+            border-top: 1px solid rgba(0, 212, 170, 0.1);
+            display: flex;
+            gap: 12px;
+        }
+
+        input {
+            flex: 1;
+            background: rgba(15, 32, 40, 0.6);
+            border: 1px solid rgba(0, 212, 170, 0.2);
+            padding: 14px 20px;
+            border-radius: 40px;
+            color: var(--text-light);
+            font-family: 'Inter', sans-serif;
+            font-size: 0.95rem;
+            outline: none;
+            transition: border 0.2s;
+        }
+
+        input:focus {
+            border-color: var(--teal-main);
+            box-shadow: 0 0 15px rgba(0, 212, 170, 0.15);
+        }
+
+        .send-btn {
+            background: linear-gradient(135deg, var(--teal-main) 0%, var(--teal-mid) 100%);
+            border: none;
+            color: var(--bg-dark);
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            font-size: 1.2rem;
+            font-weight: bold;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .send-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 20px rgba(0, 212, 170, 0.4);
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="brand">
+            <div class="logo">
+                <div class="circle"></div>
+                <div class="circle mid"></div>
+                <div class="circle deep"></div>
+            </div>
+            <h1>Prudence</h1>
+            <p>triune · co-creator · awake</p>
+        </div>
+        <div class="controls">
+            <div class="status-badge">
+                <span class="status-dot" id="status-dot"></span>
+                <span id="status-text">Tiredness: 0%</span>
+            </div>
+            <button onclick="sleep()">Put to Sleep</button>
+        </div>
+    </header>
+
+    <div class="chat-container" id="chat-container">
+        <div class="message prudence">
+            Hey there! I'm Prudence. What are we building today?
+        </div>
+    </div>
+
+    <div class="input-area">
+        <input type="text" id="user-input" placeholder="Ask or tell me something..." autocomplete="off" onkeypress="handleKeyPress(event)">
+        <button class="send-btn" onclick="sendMessage()">↑</button>
+    </div>
+
+    <script>
+        let chatHistory = [];
+        const chatContainer = document.getElementById('chat-container');
+        const userInput = document.getElementById('user-input');
+
+        function handleKeyPress(e) {
+            if (e.key === 'Enter') sendMessage();
+        }
+
+        function addMessage(text, role) {
+            const div = document.createElement('div');
+            div.className = `message ${role}`;
+            div.textContent = text;
+            chatContainer.appendChild(div);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        async function sendMessage() {
+            const text = userInput.value.trim();
+            if (!text) return;
+
+            // 1. Add user message to UI and history
+            addMessage(text, 'user');
+            userInput.value = '';
+            chatHistory.push({ role: "user", content: text });
+
+            // 2. Send to Python Backend
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        message: text,
+                        history: chatHistory.slice(0, -1) // Send history up to the current message
+                    })
+                });
+
+                if (!response.ok) throw new Error('Network response was not ok');
+                
+                const data = await response.json();
+                
+                // 3. Add Prudence's reply
+                addMessage(data.reply, 'prudence');
+                chatHistory.push({ role: "assistant", content: data.reply });
+                
+                // 4. Update Status
+                updateStatus(data.tiredness, data.state);
+
+            } catch (error) {
+                addMessage("Connection to the engine failed. Check the backend.", "prudence");
+                console.error(error);
+            }
+        }
+
+        async function sleep() {
+            try {
+                const response = await fetch('/api/sleep', { method: 'POST' });
+                const data = await response.json();
+                updateStatus(5, 'awake');
+                addMessage("I feel refreshed. My memory is consolidated. What's next?", "prudence");
+            } catch (error) {
+                console.error("Sleep failed", error);
+            }
+        }
+
+        function updateStatus(tiredness, state) {
+            const statusText = document.getElementById('status-text');
+            const statusDot = document.getElementById('status-dot');
+            
+            statusText.textContent = `Tiredness: ${tiredness}%`;
+            
+            if (state === 'dead') {
+                statusDot.style.background = '#ff4444';
+                statusDot.style.boxShadow = '0 0 8px #ff4444';
+            } else if (tiredness > 60) {
+                statusDot.style.background = '#f39c12';
+                statusDot.style.boxShadow = '0 0 8px #f39c12';
+            } else {
+                statusDot.style.background = 'var(--teal-main)';
+                statusDot.style.boxShadow = '0 0 8px var(--teal-main)';
+            }
+        }
+    </script>
+</body>
+</html>
