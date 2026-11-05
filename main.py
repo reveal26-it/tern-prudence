@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from groq import Groq
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, or_
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 import os
 import datetime
@@ -127,11 +127,39 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
         db.add(new_chat)
         db.commit()
 
+    # Save current message
     db.add(DBMessage(chat_id=chat_id, role="user", content=request.message))
     db.commit()
 
+    # --- CROSS-CHAT MEMORY RETRIEVAL ---
+    # Find keywords in the user's message (ignoring words shorter than 4 letters)
+    keywords = [w for w in request.message.split() if len(w) > 4]
+    cross_chat_context = ""
+    
+    if keywords:
+        # Search past messages from OTHER chats in this same session
+        past_memories = db.query(DBMessage).join(DBChat).filter(
+            DBChat.session_id == request.session_id,
+            DBMessage.chat_id != chat_id,
+            DBMessage.role == "user", # Only search what the user said
+            or_(*[DBMessage.content.ilike(f"%{kw}%") for kw in keywords])
+        ).order_by(DBMessage.timestamp.desc()).limit(5).all()
+
+        if past_memories:
+            cross_chat_context = "\n\n[SYSTEM NOTE - CROSS-CHAT MEMORY]:\n"
+            cross_chat_context += "You have access to these things the user said in PREVIOUS separate conversations:\n"
+            for mem in past_memories:
+                chat_title = db.query(DBChat).filter(DBChat.id == mem.chat_id).first().title
+                cross_chat_context += f"- In the chat '{chat_title}', they said: '{mem.content}'\n"
+            cross_chat_context += "Use this information naturally if it is relevant to their current question.\n"
+
+    # Build current chat context
     past_msgs = db.query(DBMessage).filter(DBMessage.chat_id == chat_id).order_by(DBMessage.timestamp).all()
-    context = [{"role": "system", "content": SYSTEM_PROMPT}]
+    
+    # Inject cross-chat memory into the system prompt dynamically
+    dynamic_system_prompt = SYSTEM_PROMPT + cross_chat_context
+    
+    context = [{"role": "system", "content": dynamic_system_prompt}]
     for m in past_msgs[-40:]:
         context.append({"role": m.role, "content": m.content})
 
