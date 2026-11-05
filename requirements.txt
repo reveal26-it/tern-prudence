@@ -3,3 +3,4 @@ uvicorn
 groq
 pydantic
 sqlalchemy
+psycopg2-binary
