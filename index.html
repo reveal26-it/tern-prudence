@@ -248,9 +248,38 @@
     </div>
 
     <script>
+        // Generate or retrieve a unique Session ID for this user
+        let sessionId = localStorage.getItem("prudence_session_id");
+        if (!sessionId) {
+            sessionId = "user_" + Math.random().toString(36).substr(2, 9);
+            localStorage.setItem("prudence_session_id", sessionId);
+        }
+
         let chatHistory = [];
         const chatContainer = document.getElementById('chat-container');
         const userInput = document.getElementById('user-input');
+
+        // Load past history on page load
+        window.onload = async () => {
+            try {
+                const response = await fetch(`/api/history/${sessionId}`);
+                const data = await response.json();
+                
+                if (data.messages && data.messages.length > 0) {
+                    // Clear the default greeting if they have history
+                    chatContainer.innerHTML = '';
+                    
+                    data.messages.forEach(msg => {
+                        addMessage(msg.content, msg.role === 'assistant' ? 'prudence' : 'user');
+                        chatHistory.push(msg);
+                    });
+                    
+                    updateStatus(data.tiredness, data.tiredness > 60 ? 'tired' : 'awake');
+                }
+            } catch (e) {
+                console.log("No history found (this is normal for a new user).");
+            }
+        };
 
         function handleKeyPress(e) {
             if (e.key === 'Enter') sendMessage();
@@ -268,19 +297,19 @@
             const text = userInput.value.trim();
             if (!text) return;
 
-            // 1. Add user message to UI and history
+            // 1. Add user message to UI
             addMessage(text, 'user');
             userInput.value = '';
             chatHistory.push({ role: "user", content: text });
 
-            // 2. Send to Python Backend
+            // 2. Send to Backend
             try {
                 const response = await fetch('/api/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
-                        message: text,
-                        history: chatHistory.slice(0, -1) // Send history up to the current message
+                        session_id: sessionId,
+                        message: text
                     })
                 });
 
@@ -303,8 +332,11 @@
 
         async function sleep() {
             try {
-                const response = await fetch('/api/sleep', { method: 'POST' });
-                const data = await response.json();
+                await fetch('/api/sleep', { 
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session_id: sessionId, message: "sleep" })
+                });
                 updateStatus(5, 'awake');
                 addMessage("I feel refreshed. My memory is consolidated. What's next?", "prudence");
             } catch (error) {
