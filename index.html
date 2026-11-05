@@ -87,6 +87,7 @@
             text-overflow: ellipsis;
             flex: 1;
             margin-right: 8px;
+            cursor: text;
         }
 
         /* THREE DOT MENU */
@@ -308,6 +309,12 @@
                     const titleSpan = document.createElement('span');
                     titleSpan.className = 'chat-title';
                     titleSpan.textContent = chat.title;
+                    
+                    // Double click to rename
+                    titleSpan.ondblclick = (e) => {
+                        e.stopPropagation();
+                        renameChat(chat.id, chat.title);
+                    };
                     
                     // Options Button
                     const optBtn = document.createElement('button');
