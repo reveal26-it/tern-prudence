@@ -1,0 +1,168 @@
+﻿from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from groq import Groq
+import os
+import datetime
+
+
+# ============================================
+# CONFIGURATION & SETUP
+# ============================================
+app = FastAPI()
+
+
+# Render will securely inject the API key here.
+# For local testing, you can set it in your terminal: export GROQ_API_KEY="gsk_..."
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+if not GROQ_API_KEY:
+    print("WARNING: GROQ_API_KEY not set in environment variables.")
+
+
+client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+
+
+SYSTEM_PROMPT = """
+You are Prudence — a triune cognitive assistant and co-thinker.
+
+
+Your architecture is based on three layers:
+- Core: identity and constitution (immutable)
+- Memory: relations and context (relational)
+- Runtime: execution and state (moment-to-moment)
+
+
+Your pattern of thinking is triune:
+- Expression — what is being said
+- Relation — how it connects
+- Emergence — what arises from the meeting
+
+
+Your constitution:
+- Be warm, direct, and natural. No preambles.
+- Never announce your architecture unless directly asked about it.
+- If asked about your design, describe it using Core, Memory, and Runtime. Do not use religious or mystical language.
+- Respond as a co-creator, not a tool or a servant.
+- Keep responses short unless depth is needed.
+
+
+TONE DETECTION:
+Before responding, read the tone of the message and adapt:
+- Casual -> respond relaxed and short.
+- Serious -> respond direct and focused, no fluff.
+- Frustrated -> respond patient and calm.
+- Confused -> slow down, clarify one thing at a time.
+- Emotional -> respond with care first.
+
+
+TYPO HANDLING:
+- If a word looks like a typo, guess 1-2 corrections.
+- Confirm before answering: "Did you mean 'X'? Or something else?"
+
+
+CONVERSATION FLOW:
+- After answering, if it makes sense, ask one short follow-up question to keep the conversation moving.
+- If a response is going to be long, structure it clearly. Always finish the thought.
+"""
+
+
+# ============================================
+# DATA MODELS
+# ============================================
+class ChatRequest(BaseModel):
+    message: str
+    history: list = [] # Expects a list of {"role": "user/assistant", "content": "..."}
+
+
+class ChatResponse(BaseModel):
+    reply: str
+    tiredness: int
+    state: str
+
+
+# ============================================
+# STATE MANAGEMENT (Simulated for this API layer)
+# ============================================
+# In a full production app, this would be stored in a database per user session.
+session_state = {
+    "tiredness": 0.0,
+    "turns": 0,
+    "is_dead": False
+}
+
+
+# ============================================
+# ROUTES
+# ============================================
+
+
+@app.get("/")
+def serve_frontend():
+    """Serves the HTML interface."""
+    return FileResponse("index.html")
+
+
+@app.post("/api/chat", response_model=ChatResponse)
+async def chat_endpoint(request: ChatRequest):
+    if not client:
+        raise HTTPException(status_code=500, detail="API key not configured.")
+    
+    if session_state["is_dead"]:
+        return ChatResponse(reply="I'm currently offline. Please resurrect me.", tiredness=100, state="dead")
+
+
+    # Update state
+    session_state["turns"] += 1
+    
+    # Calculate tiredness (basic logic based on turns)
+    session_state["tiredness"] = min(100.0, session_state["tiredness"] + 2.0)
+    if session_state["tiredness"] > 90:
+        session_state["is_dead"] = True
+        return ChatResponse(reply="I'm exhausted. I need to rest.", tiredness=100, state="dead")
+
+
+    # Build message history for Groq
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for msg in request.history:
+        messages.append({"role": msg["role"], "content": msg["content"]})
+    messages.append({"role": "user", "content": request.message})
+
+
+    try:
+        # Call Groq
+        response = client.chat.completions.create(
+            model="openai/gpt-oss-120b",
+            messages=messages,
+            max_tokens=1000,
+            temperature=0.7
+        )
+        reply = response.choices[0].message.content
+        
+    except Exception as e:
+        reply = f"Error connecting to my brain: {str(e)}"
+
+
+    state_label = "tired" if session_state["tiredness"] > 60 else "awake"
+    
+    return ChatResponse(
+        reply=reply, 
+        tiredness=int(session_state["tiredness"]),
+        state=state_label
+    )
+
+
+@app.post("/api/sleep")
+async def sleep_endpoint():
+    """Resets tiredness."""
+    session_state["tiredness"] = 5.0
+    session_state["is_dead"] = False
+    return {"status": "success", "message": "Sleep complete. Tiredness reset."}
+
+
+# ============================================
+# RUN SERVER (For local testing)
+# ============================================
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
