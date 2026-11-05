@@ -1,10 +1,9 @@
-from fastapi import FastAPI, HTTPException, Depends, Request
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from groq import Groq
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
-from sse_starlette.sse import EventSourceResponse
 import os
 import datetime
 import uuid
@@ -13,8 +12,10 @@ import json
 # ============================================
 # 1. DATABASE SETUP (SUPABASE POSTGRES)
 # ============================================
+# REPLACE WITH YOUR ACTUAL PASSWORD
 DATABASE_URL = "postgresql://postgres.wefbjzxefshopfkjkckj:YOUR_SUPABASE_PASSWORD@aws-1-eu-central-1.pooler.supabase.com:5432/postgres"
 
+print("⏳ Connecting to Supabase...")
 engine = create_engine(DATABASE_URL + "?sslmode=require", pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -40,7 +41,9 @@ class DBMessage(Base):
     content = Column(Text)
     timestamp = Column(DateTime, default=datetime.datetime.utcnow)
 
+# Create tables
 Base.metadata.create_all(bind=engine)
+print("✅ Supabase Connected & Tables Created!")
 
 def get_db():
     db = SessionLocal()
@@ -61,18 +64,15 @@ You are Prudence — a triune cognitive assistant and co-thinker.
 Your architecture is based on three layers: Core, Memory, and Runtime.
 Your constitution:
 - Be warm, direct, and natural. No preambles.
-- If asked about your design, describe it using Core, Memory, and Runtime.
 - Respond as a co-creator, not a tool or a servant.
 - Keep responses short unless depth is needed.
 
 CRITICAL RULES:
 - You are having a normal conversation. You do NOT manage the UI.
 - You do NOT create titles for chats. The system does that automatically.
-- If the user says "Remember the previous chat", they are just talking to you. Look at the conversation history provided in your context and respond to them naturally.
-
-TONE DETECTION: Adapt to the user's tone.
-TYPO HANDLING: Only guess typos if a word is clearly misspelled. Do NOT correct grammar.
-CONVERSATION FLOW: Ask a follow-up question if it makes sense. Always finish the thought.
+- TONE DETECTION: Adapt to the user's tone.
+- TYPO HANDLING: Only guess typos if clearly misspelled. Do NOT correct grammar.
+- CONVERSATION FLOW: Ask a follow-up question if it makes sense. Always finish the thought.
 """
 
 class ChatRequest(BaseModel):
@@ -102,6 +102,7 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     if not client:
         raise HTTPException(status_code=500, detail="API key not configured.")
     
+    # 1. Database Tracking
     user = db.query(DBUser).filter(DBUser.session_id == request.session_id).first()
     if not user:
         user = DBUser(session_id=request.session_id, tiredness=0)
@@ -114,10 +115,10 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     chat_id = request.chat_id
     if not chat_id:
         chat_id = str(uuid.uuid4())
-        stop_words = ["the", "this", "that", "chat", "title", "name", "call", "a", "an", "is", "can", "you", "to", "it", "let's"]
+        title = "New Conversation"
         words = request.message.replace("'", "").replace('"', "").split()
-        notable_words = [w for w in words if w.lower() not in stop_words]
-        title = notable_words[0].capitalize() + " Conversation" if notable_words else "New Conversation"
+        if words:
+            title = words[0].capitalize() + " Conversation"
         new_chat = DBChat(id=chat_id, session_id=request.session_id, title=title)
         db.add(new_chat)
         db.commit()
@@ -125,32 +126,14 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     db.add(DBMessage(chat_id=chat_id, role="user", content=request.message))
     db.commit()
 
-    # --- CROSS-CHAT MEMORY ---
-    cross_chat_context = ""
-    previous_chats = db.query(DBChat).filter(
-        DBChat.session_id == request.session_id, DBChat.id != chat_id
-    ).order_by(DBChat.created_at.desc()).limit(2).all()
-
-    if previous_chats:
-        cross_chat_context = "\n\n[SYSTEM NOTE - CROSS-CHAT MEMORY]:\n"
-        cross_chat_context += "You have access to the recent conversations the user had with you in OTHER chat windows:\n"
-        for p_chat in previous_chats:
-            p_msgs = db.query(DBMessage).filter(DBMessage.chat_id == p_chat.id).order_by(DBMessage.timestamp.desc()).limit(3).all()
-            if p_msgs:
-                cross_chat_context += f"\n--- From the chat '{p_chat.title}' ---\n"
-                for msg in reversed(p_msgs):
-                    role = "User" if msg.role == "user" else "You"
-                    cross_chat_context += f"{role}: {msg.content}\n"
-
+    # 2. Build Context
     past_msgs = db.query(DBMessage).filter(DBMessage.chat_id == chat_id).order_by(DBMessage.timestamp).all()
-    dynamic_system_prompt = SYSTEM_PROMPT + cross_chat_context
-    
-    context = [{"role": "system", "content": dynamic_system_prompt}]
-    for m in past_msgs[-40:]:
+    context = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for m in past_msgs[-20:]:
         context.append({"role": m.role, "content": m.content})
 
-    # --- STREAMING GENERATOR ---
-    async def event_generator():
+    # 3. Stream Generator
+    def stream_generator():
         full_reply = ""
         try:
             response = client.chat.completions.create(
@@ -161,21 +144,23 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
                 stream=True
             )
             
-            yield {"data": json.dumps({"type": "meta", "chat_id": chat_id})}
+            # Send Meta First
+            yield json.dumps({"type": "meta", "chat_id": chat_id}) + "\n"
             
             for chunk in response:
                 if chunk.choices[0].delta.content is not None:
-                    text_chunk = chunk.choices[0].delta.content
-                    full_reply += text_chunk
-                    yield {"data": json.dumps({"type": "chunk", "text": text_chunk})}
+                    text = chunk.choices[0].delta.content
+                    full_reply += text
+                    yield json.dumps({"type": "chunk", "text": text}) + "\n"
             
+            # Save to DB
             db.add(DBMessage(chat_id=chat_id, role="assistant", content=full_reply))
             db.commit()
             
         except Exception as e:
-            yield {"data": json.dumps({"type": "error", "text": str(e)})}
+            yield json.dumps({"type": "error", "text": str(e)}) + "\n"
 
-    return EventSourceResponse(event_generator())
+    return StreamingResponse(stream_generator(), media_type="application/x-ndjson")
 
 @app.put("/api/chats/{chat_id}")
 def update_chat_title(chat_id: str, update: ChatUpdate, db: Session = Depends(get_db)):
