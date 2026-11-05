@@ -1,9 +1,10 @@
-from fastapi import FastAPI, HTTPException, Depends
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from groq import Groq
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
+from sse_starlette.sse import EventSourceResponse
 import os
 import datetime
 import uuid
@@ -67,11 +68,10 @@ Your constitution:
 CRITICAL RULES:
 - You are having a normal conversation. You do NOT manage the UI.
 - You do NOT create titles for chats. The system does that automatically.
-- You do NOT rename conversations. 
 - If the user says "Remember the previous chat", they are just talking to you. Look at the conversation history provided in your context and respond to them naturally.
 
 TONE DETECTION: Adapt to the user's tone.
-TYPO HANDLING: Only guess typos if a word is clearly misspelled (e.g., "nudr"). Do NOT correct grammar or punctuation.
+TYPO HANDLING: Only guess typos if a word is clearly misspelled. Do NOT correct grammar.
 CONVERSATION FLOW: Ask a follow-up question if it makes sense. Always finish the thought.
 """
 
@@ -150,7 +150,7 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
         context.append({"role": m.role, "content": m.content})
 
     # --- STREAMING GENERATOR ---
-    def stream_generator():
+    async def event_generator():
         full_reply = ""
         try:
             response = client.chat.completions.create(
@@ -158,26 +158,24 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
                 messages=context,
                 max_tokens=1000,
                 temperature=0.7,
-                stream=True # Turn on streaming
+                stream=True
             )
             
-            # Yield the chat_id first so the frontend knows
-            yield json.dumps({"type": "meta", "chat_id": chat_id}) + "\n"
+            yield {"data": json.dumps({"type": "meta", "chat_id": chat_id})}
             
             for chunk in response:
                 if chunk.choices[0].delta.content is not None:
                     text_chunk = chunk.choices[0].delta.content
                     full_reply += text_chunk
-                    yield json.dumps({"type": "chunk", "text": text_chunk}) + "\n"
+                    yield {"data": json.dumps({"type": "chunk", "text": text_chunk})}
             
-            # Save the final full message to the database
             db.add(DBMessage(chat_id=chat_id, role="assistant", content=full_reply))
             db.commit()
             
         except Exception as e:
-            yield json.dumps({"type": "error", "text": str(e)}) + "\n"
+            yield {"data": json.dumps({"type": "error", "text": str(e)})}
 
-    return StreamingResponse(stream_generator(), media_type="application/x-ndjson")
+    return EventSourceResponse(event_generator())
 
 @app.put("/api/chats/{chat_id}")
 def update_chat_title(chat_id: str, update: ChatUpdate, db: Session = Depends(get_db)):
