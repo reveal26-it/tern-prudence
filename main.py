@@ -84,6 +84,9 @@ class ChatResponse(BaseModel):
     state: str
     chat_id: str
 
+class ChatUpdate(BaseModel):
+    title: str
+
 @app.get("/")
 def serve_frontend():
     return FileResponse("index.html")
@@ -114,13 +117,20 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     user.tiredness = min(100, user.tiredness + 2)
     db.commit()
 
-    # 3. Get or create Chat
+    # 3. Get or create Chat with smart title
     chat_id = request.chat_id
     if not chat_id:
-        # Create a new chat session
         chat_id = str(uuid.uuid4())
-        # Generate a title based on the first 4 words of the message
-        title = " ".join(request.message.split()[:4]) + "..."
+        
+        stop_words = ["the", "this", "that", "chat", "title", "name", "call", "a", "an", "is", "can", "you", "to", "it", "let's"]
+        words = request.message.replace("'", "").replace('"', "").split()
+        notable_words = [w for w in words if w.lower() not in stop_words]
+        
+        if notable_words:
+            title = notable_words[0].capitalize() + " Conversation"
+        else:
+            title = "New Conversation"
+            
         new_chat = DBChat(id=chat_id, session_id=request.session_id, title=title)
         db.add(new_chat)
         db.commit()
@@ -129,7 +139,7 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     db.add(DBMessage(chat_id=chat_id, role="user", content=request.message))
     db.commit()
 
-    # 5. Build context (last 10 messages for this specific chat)
+    # 5. Build context
     past_msgs = db.query(DBMessage).filter(DBMessage.chat_id == chat_id).order_by(DBMessage.timestamp).all()
     context = [{"role": "system", "content": SYSTEM_PROMPT}]
     for m in past_msgs[-10:]:
@@ -153,6 +163,21 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
 
     state_label = "tired" if user.tiredness > 60 else "awake"
     return ChatResponse(reply=reply, tiredness=user.tiredness, state=state_label, chat_id=chat_id)
+
+@app.put("/api/chats/{chat_id}")
+def update_chat_title(chat_id: str, update: ChatUpdate, db: Session = Depends(get_db)):
+    chat = db.query(DBChat).filter(DBChat.id == chat_id).first()
+    if chat:
+        chat.title = update.title
+        db.commit()
+    return {"status": "success"}
+
+@app.delete("/api/chats/{chat_id}")
+def delete_chat(chat_id: str, db: Session = Depends(get_db)):
+    db.query(DBMessage).filter(DBMessage.chat_id == chat_id).delete()
+    db.query(DBChat).filter(DBChat.id == chat_id).delete()
+    db.commit()
+    return {"status": "success"}
 
 @app.post("/api/sleep")
 async def sleep_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
