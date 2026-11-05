@@ -288,7 +288,6 @@
 
         window.onload = () => {
             loadChatList();
-            // Only clear the screen if there is no active chat
             if (!currentChatId) {
                 chatContainer.innerHTML = '<div class="message prudence">Hey there! I\'m Prudence. What are we building today?</div>';
             }
@@ -312,7 +311,6 @@
                     titleSpan.className = 'chat-title';
                     titleSpan.textContent = chat.title;
                     
-                    // Double click to rename
                     titleSpan.ondblclick = (e) => {
                         e.stopPropagation();
                         renameChat(chat.id, chat.title);
