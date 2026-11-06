@@ -141,7 +141,6 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
 
     past_msgs = db.query(DBMessage).filter(DBMessage.chat_id == chat_id).order_by(DBMessage.timestamp).all()
     
-    # Combine the selected Persona with the Base rules
     persona_prompt = PERSONAS.get(request.persona, PERSONAS["cocreator"])
     system_prompt = persona_prompt + "\n" + BASE_PROMPT
 
@@ -171,7 +170,6 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     def stream_generator():
         full_reply = ""
         try:
-            # Yield the metadata first
             yield json.dumps({"type": "meta", "chat_id": chat_id, "tiredness": user.tiredness}) + "\n"
             
             response = client.chat.completions.create(
@@ -179,7 +177,7 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
                 messages=context,
                 max_tokens=1000,
                 temperature=0.7,
-                stream=True # Turn on streaming
+                stream=True
             )
             
             for chunk in response:
@@ -188,14 +186,12 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
                     full_reply += text
                     yield json.dumps({"type": "chunk", "text": text}) + "\n"
             
-            # Save to DB once complete
             db.add(DBMessage(chat_id=chat_id, role="assistant", content=full_reply))
             db.commit()
             
         except Exception as e:
             yield json.dumps({"type": "error", "text": str(e)}) + "\n"
 
-    # Returning text/event-stream forces Render to pass the chunks immediately
     return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
 @app.put("/api/chats/{chat_id}")
