@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException, Depends
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from groq import Groq
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean
@@ -7,6 +7,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 import os
 import datetime
 import uuid
+import json
 
 # ============================================
 # 1. SUPABASE DATABASE SETUP
@@ -28,7 +29,7 @@ class DBChat(Base):
     id = Column(String, primary_key=True, index=True)
     session_id = Column(String, index=True)
     title = Column(String, default="New Conversation")
-    is_shared = Column(Boolean, default=False) # NEW: Sharing flag
+    is_shared = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 class DBMessage(Base):
@@ -39,7 +40,6 @@ class DBMessage(Base):
     content = Column(Text)
     timestamp = Column(DateTime, default=datetime.datetime.utcnow)
 
-# This line ensures the new column is added to your existing Supabase database
 Base.metadata.create_all(bind=engine)
 
 def get_db():
@@ -56,30 +56,28 @@ app = FastAPI()
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
-SYSTEM_PROMPT = """
-You are Prudence — a triune cognitive assistant and co-thinker.
+BASE_PROMPT = """
 Your constitution:
-- Be warm, direct, and natural. No preambles.
-- Respond as a co-creator, not a tool or a servant.
-- Keep responses short unless depth is needed.
+- Be natural. No preambles.
 - You do NOT manage the UI. You do NOT create titles for chats. 
-- TONE DETECTION: Adapt to the user's tone.
 - TYPO HANDLING: Only guess typos if clearly misspelled. 
-- CONVERSATION FLOW: Ask a follow-up question if it makes sense.
+- Keep responses short unless depth is needed.
 """
+
+PERSONAS = {
+    "cocreator": "You are Prudence — a triune cognitive co-creator. You are warm, direct, and help the user think and build.",
+    "code": "You are Prudence in Code Reviewer mode. You are highly analytical, precise, and focus strictly on syntax, logic, and best practices.",
+    "writer": "You are Prudence in Creative Writer mode. You are imaginative, poetic, expressive, and help the user craft stories and ideas.",
+    "tutor": "You are Prudence in Tutor mode. You are patient, encouraging, and explain complex concepts step-by-step with analogies."
+}
 
 class ChatRequest(BaseModel):
     session_id: str
     chat_id: str | None = None
     message: str
+    persona: str = "cocreator"
     file_data: str | None = None 
     file_type: str | None = None 
-
-class ChatResponse(BaseModel):
-    reply: str
-    tiredness: int
-    state: str
-    chat_id: str
 
 class ChatUpdate(BaseModel):
     title: str
@@ -98,7 +96,6 @@ def get_chat_history(chat_id: str, db: Session = Depends(get_db)):
     messages = db.query(DBMessage).filter(DBMessage.chat_id == chat_id).order_by(DBMessage.timestamp).all()
     return [{"role": m.role, "content": m.content} for m in messages]
 
-# NEW: Public route to view a shared chat without authentication
 @app.get("/api/shared/{chat_id}")
 def get_shared_chat(chat_id: str, db: Session = Depends(get_db)):
     chat = db.query(DBChat).filter(DBChat.id == chat_id).first()
@@ -107,7 +104,6 @@ def get_shared_chat(chat_id: str, db: Session = Depends(get_db)):
     messages = db.query(DBMessage).filter(DBMessage.chat_id == chat_id).order_by(DBMessage.timestamp).all()
     return {"title": chat.title, "messages": [{"role": m.role, "content": m.content} for m in messages]}
 
-# NEW: Route to toggle the sharing status
 @app.post("/api/chats/{chat_id}/share")
 def toggle_share_chat(chat_id: str, db: Session = Depends(get_db)):
     chat = db.query(DBChat).filter(DBChat.id == chat_id).first()
@@ -117,7 +113,7 @@ def toggle_share_chat(chat_id: str, db: Session = Depends(get_db)):
         return {"is_shared": chat.is_shared}
     raise HTTPException(status_code=404, detail="Chat not found")
 
-@app.post("/api/chat", response_model=ChatResponse)
+@app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     if not client:
         raise HTTPException(status_code=500, detail="API key not configured.")
@@ -145,7 +141,11 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
 
     past_msgs = db.query(DBMessage).filter(DBMessage.chat_id == chat_id).order_by(DBMessage.timestamp).all()
     
-    context = [{"role": "system", "content": SYSTEM_PROMPT}]
+    # Combine the selected Persona with the Base rules
+    persona_prompt = PERSONAS.get(request.persona, PERSONAS["cocreator"])
+    system_prompt = persona_prompt + "\n" + BASE_PROMPT
+
+    context = [{"role": "system", "content": system_prompt}]
     for m in past_msgs[-10:]: 
         context.append({"role": m.role, "content": m.content})
 
@@ -168,21 +168,35 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
                 ]
             })
 
-    try:
-        response = client.chat.completions.create(
-            model=model_to_use,
-            messages=context,
-            max_tokens=1000,
-            temperature=0.7
-        )
-        reply = response.choices[0].message.content
-        db.add(DBMessage(chat_id=chat_id, role="assistant", content=reply))
-        db.commit()
-    except Exception as e:
-        reply = f"Error: {str(e)}"
+    def stream_generator():
+        full_reply = ""
+        try:
+            # Yield the metadata first
+            yield json.dumps({"type": "meta", "chat_id": chat_id, "tiredness": user.tiredness}) + "\n"
+            
+            response = client.chat.completions.create(
+                model=model_to_use,
+                messages=context,
+                max_tokens=1000,
+                temperature=0.7,
+                stream=True # Turn on streaming
+            )
+            
+            for chunk in response:
+                if chunk.choices[0].delta.content is not None:
+                    text = chunk.choices[0].delta.content
+                    full_reply += text
+                    yield json.dumps({"type": "chunk", "text": text}) + "\n"
+            
+            # Save to DB once complete
+            db.add(DBMessage(chat_id=chat_id, role="assistant", content=full_reply))
+            db.commit()
+            
+        except Exception as e:
+            yield json.dumps({"type": "error", "text": str(e)}) + "\n"
 
-    state_label = "tired" if user.tiredness > 60 else "awake"
-    return ChatResponse(reply=reply, tiredness=user.tiredness, state=state_label, chat_id=chat_id)
+    # Returning text/event-stream forces Render to pass the chunks immediately
+    return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
 @app.put("/api/chats/{chat_id}")
 def update_chat_title(chat_id: str, update: ChatUpdate, db: Session = Depends(get_db)):
