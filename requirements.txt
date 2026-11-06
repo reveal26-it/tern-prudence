@@ -1,7 +1,0 @@
-fastapi
-uvicorn
-groq
-pydantic
-sqlalchemy
-psycopg[binary]
-sse-starlette
