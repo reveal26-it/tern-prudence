@@ -11,8 +11,7 @@ import uuid
 # ============================================
 # 1. SUPABASE POSTGRES DATABASE SETUP
 # ============================================
-# REPLACE 'YOUR_SUPABASE_PASSWORD' WITH YOUR ACTUAL PASSWORD
-DATABASE_URL = "postgresql://postgres.wefbjzxefshopfkjkckj:YOUR_SUPABASE_PASSWORD@aws-1-eu-central-1.pooler.supabase.com:5432/postgres"
+DATABASE_URL = "postgresql://postgres.wefbjzxefshopfkjkckj:QIltOVZ6Oz4S3If4@aws-1-eu-central-1.pooler.supabase.com:5432/postgres"
 
 # Connect securely
 engine = create_engine(DATABASE_URL, connect_args={"sslmode": "require"}, pool_pre_ping=True)
