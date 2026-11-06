@@ -2,18 +2,17 @@ from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from groq import Groq
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 import os
 import datetime
 import uuid
 
 # ============================================
-# 1. SUPABASE POSTGRES DATABASE SETUP
+# 1. SUPABASE DATABASE SETUP
 # ============================================
 DATABASE_URL = "postgresql://postgres.wefbjzxefshopfkjkckj:QIltOVZ6Oz4S3If4@aws-1-eu-central-1.pooler.supabase.com:5432/postgres"
 
-# Connect securely
 engine = create_engine(DATABASE_URL, connect_args={"sslmode": "require"}, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -29,6 +28,7 @@ class DBChat(Base):
     id = Column(String, primary_key=True, index=True)
     session_id = Column(String, index=True)
     title = Column(String, default="New Conversation")
+    is_shared = Column(Boolean, default=False) # NEW: Sharing flag
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 class DBMessage(Base):
@@ -39,6 +39,7 @@ class DBMessage(Base):
     content = Column(Text)
     timestamp = Column(DateTime, default=datetime.datetime.utcnow)
 
+# This line ensures the new column is added to your existing Supabase database
 Base.metadata.create_all(bind=engine)
 
 def get_db():
@@ -90,12 +91,31 @@ def serve_frontend():
 @app.get("/api/chats/{session_id}")
 def get_chat_list(session_id: str, db: Session = Depends(get_db)):
     chats = db.query(DBChat).filter(DBChat.session_id == session_id).order_by(DBChat.created_at.desc()).all()
-    return [{"id": c.id, "title": c.title} for c in chats]
+    return [{"id": c.id, "title": c.title, "is_shared": c.is_shared} for c in chats]
 
 @app.get("/api/chat/{chat_id}")
 def get_chat_history(chat_id: str, db: Session = Depends(get_db)):
     messages = db.query(DBMessage).filter(DBMessage.chat_id == chat_id).order_by(DBMessage.timestamp).all()
     return [{"role": m.role, "content": m.content} for m in messages]
+
+# NEW: Public route to view a shared chat without authentication
+@app.get("/api/shared/{chat_id}")
+def get_shared_chat(chat_id: str, db: Session = Depends(get_db)):
+    chat = db.query(DBChat).filter(DBChat.id == chat_id).first()
+    if not chat or not chat.is_shared:
+        raise HTTPException(status_code=404, detail="Chat not found or not shared.")
+    messages = db.query(DBMessage).filter(DBMessage.chat_id == chat_id).order_by(DBMessage.timestamp).all()
+    return {"title": chat.title, "messages": [{"role": m.role, "content": m.content} for m in messages]}
+
+# NEW: Route to toggle the sharing status
+@app.post("/api/chats/{chat_id}/share")
+def toggle_share_chat(chat_id: str, db: Session = Depends(get_db)):
+    chat = db.query(DBChat).filter(DBChat.id == chat_id).first()
+    if chat:
+        chat.is_shared = not chat.is_shared
+        db.commit()
+        return {"is_shared": chat.is_shared}
+    raise HTTPException(status_code=404, detail="Chat not found")
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
@@ -116,7 +136,7 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
         chat_id = str(uuid.uuid4())
         words = request.message.split()
         title = words[0].capitalize() + " Conversation" if words else "New Conversation"
-        new_chat = DBChat(id=chat_id, session_id=request.session_id, title=title)
+        new_chat = DBChat(id=chat_id, session_id=request.session_id, title=title, is_shared=False)
         db.add(new_chat)
         db.commit()
 
