@@ -124,7 +124,6 @@
             border-top: 1px solid rgba(0, 212, 170, 0.1); display: flex; gap: 12px; align-items: center;
         }
         
-        /* Icons */
         .icon-btn {
             cursor: pointer; font-size: 1.2rem; color: #a0b0b0; transition: color 0.2s; 
             padding: 0 4px; background: none; border: none;
@@ -132,11 +131,7 @@
         .icon-btn:hover { color: var(--teal-main); }
         .icon-btn.recording { color: var(--red-alert); animation: pulse 1s infinite; }
         
-        @keyframes pulse {
-            0% { transform: scale(1); }
-            50% { transform: scale(1.1); }
-            100% { transform: scale(1); }
-        }
+        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.1); } 100% { transform: scale(1); } }
 
         #file-upload { display: none; }
         
@@ -186,11 +181,13 @@
                 <h1>Prudence</h1>
                 <p>triune · co-creator</p>
             </div>
-            <div class="controls">
+            <div class="controls" id="header-controls">
                 <div class="status-badge">
                     <span class="status-dot" id="status-dot"></span>
                     <span id="status-text">Tiredness: 0%</span>
                 </div>
+                <button class="action-btn" id="share-btn" onclick="shareChat()" style="display:none;">🔗 Share</button>
+                <button class="action-btn" id="export-btn" onclick="exportChat()" style="display:none;">📥 Export</button>
                 <button class="action-btn" id="speaker-toggle" onclick="toggleSpeaker()" title="Toggle Voice">🔊 Voice On</button>
                 <button class="action-btn" onclick="sleep()">Sleep</button>
             </div>
@@ -198,12 +195,10 @@
 
         <div class="chat-container" id="chat-container"></div>
 
-        <div class="input-area">
-            <!-- Document Upload -->
+        <div class="input-area" id="input-area">
             <label class="icon-btn" for="file-upload">📎</label>
             <input type="file" id="file-upload" accept="image/*, .pdf, .txt, .csv, .md" onchange="handleFileUpload(event)">
             
-            <!-- Voice Recording -->
             <button class="icon-btn" id="mic-btn" onclick="toggleMic()">🎤</button>
             
             <div class="file-preview" id="file-preview">File loaded</div>
@@ -215,6 +210,10 @@
 
     <script>
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+
+        // Check if this is a shared link (e.g., /?share=UUID)
+        const urlParams = new URLSearchParams(window.location.search);
+        const sharedChatId = urlParams.get('share');
 
         let sessionId = localStorage.getItem("prudence_session_id");
         if (!sessionId) {
@@ -238,7 +237,6 @@
         const speakerToggle = document.getElementById('speaker-toggle');
         const synth = window.speechSynthesis;
         
-        // Setup Speech Recognition (Dictation)
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         let recognition = null;
 
@@ -256,29 +254,16 @@
             recognition.onresult = (event) => {
                 const transcript = event.results[0][0].transcript;
                 userInput.value += transcript + " ";
-                sendMessage(); // Automatically send after speaking
+                sendMessage();
             };
 
-            recognition.onerror = (event) => {
-                console.error("Speech recognition error", event.error);
-                stopRecording();
-            };
-
-            recognition.onend = () => {
-                stopRecording();
-            };
+            recognition.onerror = (event) => { stopRecording(); };
+            recognition.onend = () => { stopRecording(); };
         }
 
         function toggleMic() {
-            if (!recognition) {
-                alert("Voice dictation is not supported in this browser. Try Chrome or Safari.");
-                return;
-            }
-            if (isRecording) {
-                recognition.stop();
-            } else {
-                recognition.start();
-            }
+            if (!recognition) { alert("Voice dictation not supported in this browser."); return; }
+            if (isRecording) { recognition.stop(); } else { recognition.start(); }
         }
 
         function stopRecording() {
@@ -287,7 +272,6 @@
             userInput.placeholder = "Ask or tell me something...";
         }
 
-        // Setup Text-to-Speech
         function toggleSpeaker() {
             isSpeakerOn = !isSpeakerOn;
             speakerToggle.textContent = isSpeakerOn ? "🔊 Voice On" : "🔇 Voice Off";
@@ -296,35 +280,95 @@
 
         function speakText(text) {
             if (!isSpeakerOn) return;
-            synth.cancel(); // Stop current speech
+            synth.cancel();
             const utterance = new SpeechSynthesisUtterance(text);
-            utterance.rate = 1.0;
-            utterance.pitch = 1.0;
-            // Try to find a natural-sounding voice
             const voices = synth.getVoices();
             const preferredVoice = voices.find(v => v.name.includes("Google US English") || v.name.includes("Samantha") || v.name.includes("Female"));
             if (preferredVoice) utterance.voice = preferredVoice;
             synth.speak(utterance);
         }
 
-        // --- UI & CHAT LOGIC ---
+        // --- INITIALIZATION ---
         window.onload = () => {
-            loadChatList();
-            if (!currentChatId) {
-                chatContainer.innerHTML = '<div class="message prudence">Hey there! I\'m Prudence. Upload a file, talk to me, or type below.</div>';
+            if (sharedChatId) {
+                loadSharedChat(sharedChatId);
+            } else {
+                document.getElementById('share-btn').style.display = 'inline-block';
+                document.getElementById('export-btn').style.display = 'inline-block';
+                loadChatList();
+                if (!currentChatId) {
+                    chatContainer.innerHTML = '<div class="message prudence">Hey there! I\'m Prudence. Upload a file, talk to me, or type below.</div>';
+                }
             }
-            // Ensure voices load
             if (speechSynthesis.onvoiceschanged !== undefined) {
                 speechSynthesis.onvoiceschanged = () => synth.getVoices();
             }
         };
 
+        // --- SHARED CHAT LOGIC ---
+        async function loadSharedChat(chatId) {
+            // Hide sidebar and input for read-only mode
+            document.getElementById('sidebar').style.display = 'none';
+            document.getElementById('input-area').style.display = 'none';
+            document.getElementById('header-controls').innerHTML = '<div class="status-badge" style="color:var(--teal-main);">Read-Only Shared Chat</div>';
+
+            try {
+                const res = await fetch(`/api/shared/${chatId}`);
+                if (!res.ok) throw new Error("Not found");
+                const data = await res.json();
+                
+                chatContainer.innerHTML = `<div style="text-align:center; color:#a0b0b0; margin-bottom:20px;">Shared Conversation: <b>${data.title}</b></div>`;
+                
+                data.messages.forEach(msg => {
+                    addMessage(msg.content, msg.role === 'assistant' ? 'prudence' : 'user');
+                });
+            } catch (e) {
+                chatContainer.innerHTML = '<div class="message prudence">This shared chat does not exist or is no longer public.</div>';
+            }
+        }
+
+        // --- SHARE & EXPORT LOGIC ---
+        async function shareChat() {
+            if (!currentChatId) { alert("Start a chat first before sharing."); return; }
+            try {
+                const res = await fetch(`/api/chats/${currentChatId}/share`, { method: 'POST' });
+                const data = await res.json();
+                const shareUrl = `${window.location.origin}/?share=${currentChatId}`;
+                
+                if (data.is_shared) {
+                    navigator.clipboard.writeText(shareUrl);
+                    alert(`Chat is now public! Link copied to clipboard:\n\n${shareUrl}`);
+                } else {
+                    alert("Chat is no longer public.");
+                }
+            } catch (e) { console.error(e); }
+        }
+
+        function exportChat() {
+            const messages = document.querySelectorAll('.message');
+            if (messages.length === 0) return;
+            
+            let text = "Prudence Conversation Export\n===========================\n\n";
+            messages.forEach(msg => {
+                const role = msg.classList.contains('user') ? 'User' : 'Prudence';
+                text += `${role}:\n${msg.textContent}\n\n`;
+            });
+
+            const blob = new Blob([text], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `prudence_chat_${Date.now()}.txt`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // --- MAIN CHAT LOGIC ---
         function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); }
 
         async function handleFileUpload(event) {
             const file = event.target.files[0];
             if (!file) return;
-
             filePreview.style.display = 'inline-block';
             filePreview.textContent = `Reading ${file.name}...`;
             uploadedFileData = null;
@@ -349,7 +393,6 @@
                         const content = await page.getTextContent();
                         text += content.items.map(item => item.str).join(" ") + "\n";
                     }
-
                     if (text.trim().length < 10) {
                         filePreview.textContent = `Scanning PDF...`;
                         const page = await pdf.getPage(1);
@@ -373,22 +416,17 @@
                     uploadedFileType = 'text';
                     filePreview.textContent = `📄 ${file.name}`;
                 }
-            } catch (err) {
-                console.error(err);
-                filePreview.textContent = "Error reading file";
-            }
+            } catch (err) { filePreview.textContent = "Error reading file"; }
         }
 
         async function loadChatList() {
             try {
                 const res = await fetch(`/api/chats/${sessionId}`);
                 const chats = await res.json();
-                
                 chatList.innerHTML = '';
                 chats.forEach(chat => {
                     const div = document.createElement('div');
                     div.className = `chat-item ${chat.id === currentChatId ? 'active' : ''}`;
-                    
                     const titleSpan = document.createElement('span');
                     titleSpan.className = 'chat-title';
                     titleSpan.textContent = chat.title;
@@ -412,7 +450,6 @@
                     
                     dropdown.appendChild(renameBtn);
                     dropdown.appendChild(deleteBtn);
-                    
                     div.appendChild(titleSpan);
                     div.appendChild(optBtn);
                     div.appendChild(dropdown);
@@ -423,28 +460,20 @@
                         document.querySelectorAll('.dropdown').forEach(d => d.classList.remove('show'));
                         dropdown.classList.toggle('show');
                     };
-
                     chatList.appendChild(div);
                 });
-            } catch (e) { console.error("Could not load chats", e); }
+            } catch (e) { console.error(e); }
         }
 
-        document.addEventListener('click', () => {
-            document.querySelectorAll('.dropdown').forEach(d => d.classList.remove('show'));
-        });
+        document.addEventListener('click', () => { document.querySelectorAll('.dropdown').forEach(d => d.classList.remove('show')); });
 
         async function loadChat(chatId) {
             currentChatId = chatId;
             chatContainer.innerHTML = ''; 
-            
             try {
                 const res = await fetch(`/api/chat/${chatId}`);
                 const messages = await res.json();
-                
-                messages.forEach(msg => {
-                    addMessage(msg.content, msg.role === 'assistant' ? 'prudence' : 'user');
-                });
-                
+                messages.forEach(msg => { addMessage(msg.content, msg.role === 'assistant' ? 'prudence' : 'user'); });
                 loadChatList(); 
                 if(window.innerWidth <= 768) toggleSidebar();
             } catch (e) { console.error(e); }
@@ -455,116 +484,7 @@
             if (newTitle && newTitle.trim() !== "") {
                 try {
                     await fetch(`/api/chats/${chatId}`, {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
+                        method: 'PUT', headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ title: newTitle })
                     });
-                    loadChatList();
-                } catch (e) { console.error(e); }
-            }
-        }
-
-        async function deleteChat(chatId) {
-            if (confirm("Are you sure you want to delete this chat?")) {
-                try {
-                    await fetch(`/api/chats/${chatId}`, { method: 'DELETE' });
-                    if (currentChatId === chatId) startNewChat();
-                    loadChatList();
-                } catch (e) { console.error(e); }
-            }
-        }
-
-        function startNewChat() {
-            currentChatId = null;
-            uploadedFileData = null;
-            uploadedFileType = null;
-            filePreview.style.display = 'none';
-            document.getElementById('file-upload').value = '';
-            chatContainer.innerHTML = '<div class="message prudence">Hey there! I\'m Prudence. What are we building today?</div>';
-            if(window.innerWidth <= 768) document.getElementById('sidebar').classList.remove('open');
-        }
-
-        function handleKeyPress(e) { if (e.key === 'Enter') sendMessage(); }
-
-        function addMessage(text, role) {
-            const div = document.createElement('div');
-            div.className = `message ${role}`;
-            div.textContent = text;
-            chatContainer.appendChild(div);
-            chatContainer.scrollTop = chatContainer.scrollHeight;
-            return div;
-        }
-
-        async function sendMessage() {
-            const text = userInput.value.trim();
-            if (!text && !uploadedFileData) return;
-
-            const displayMsg = text || "Please analyze this.";
-            addMessage(displayMsg, 'user');
-            userInput.value = '';
-
-            const prudenceDiv = addMessage('...', 'prudence');
-
-            try {
-                const response = await fetch('/api/chat', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        session_id: sessionId,
-                        chat_id: currentChatId,
-                        message: displayMsg,
-                        file_data: uploadedFileData,
-                        file_type: uploadedFileType
-                    })
-                });
-
-                const data = await response.json();
-                prudenceDiv.textContent = data.reply;
-                updateStatus(data.tiredness, data.state);
-                
-                // SPEAK THE TEXT
-                speakText(data.reply);
-
-                if (!currentChatId) {
-                    currentChatId = data.chat_id;
-                    loadChatList();
-                }
-
-                uploadedFileData = null;
-                uploadedFileType = null;
-                filePreview.style.display = 'none';
-                document.getElementById('file-upload').value = '';
-
-            } catch (error) {
-                prudenceDiv.textContent = "Connection failed.";
-            }
-        }
-
-        async function sleep() {
-            try {
-                await fetch('/api/sleep', { 
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ session_id: sessionId, message: "sleep" })
-                });
-                updateStatus(5, 'awake');
-                addMessage("I feel refreshed. What's next?", "prudence");
-            } catch (error) { console.error(error); }
-        }
-
-        function updateStatus(tiredness, state) {
-            document.getElementById('status-text').textContent = `Tiredness: ${tiredness}%`;
-            const dot = document.getElementById('status-dot');
-            if (state === 'dead' || tiredness > 90) {
-                dot.style.background = '#ff4444'; 
-                dot.style.boxShadow = '0 0 8px #ff4444';
-            } else if (tiredness > 60) {
-                dot.style.background = '#f39c12'; 
-                dot.style.boxShadow = '0 0 8px #f39c12';
-            } else {
-                dot.style.background = 'var(--teal-main)'; 
-                dot.style.boxShadow = '0 0 8px var(--teal-main)';
-            }
-        }
-    </script>
-</body>
-</html>
+                    loadChatList
