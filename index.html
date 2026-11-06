@@ -219,7 +219,7 @@
             document.getElementById('sidebar').classList.toggle('open');
         }
 
-        // --- FILE UPLOAD LOGIC ---
+        // --- FILE UPLOAD LOGIC (Smart Fallback) ---
         async function handleFileUpload(event) {
             const file = event.target.files[0];
             if (!file) return;
@@ -231,19 +231,17 @@
 
             try {
                 if (file.type.startsWith("image/")) {
-                    // It's an image! Convert to Base64
+                    // Image -> Base64
                     const reader = new FileReader();
                     reader.onload = (e) => {
-                        // Remove the data:image/...;base64, prefix
-                        const base64String = e.target.result.split(',')[1];
-                        uploadedFileData = base64String;
+                        uploadedFileData = e.target.result.split(',')[1];
                         uploadedFileType = 'image';
                         filePreview.textContent = `🖼️ ${file.name}`;
                     };
                     reader.readAsDataURL(file);
                 } 
                 else if (file.type === "application/pdf") {
-                    // It's a PDF! Extract text
+                    // PDF -> Try Text, Fallback to Image
                     const arrayBuffer = await file.arrayBuffer();
                     const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
                     let text = "";
@@ -252,12 +250,30 @@
                         const content = await page.getTextContent();
                         text += content.items.map(item => item.str).join(" ") + "\n";
                     }
-                    uploadedFileData = text;
-                    uploadedFileType = 'text';
-                    filePreview.textContent = `📄 ${file.name}`;
+
+                    // If PDF has NO text (scanned), render page 1 as an image instead
+                    if (text.trim().length < 10) {
+                        filePreview.textContent = `Scanning PDF...`;
+                        const page = await pdf.getPage(1);
+                        const viewport = page.getViewport({ scale: 1.5 });
+                        const canvas = document.createElement('canvas');
+                        const context = canvas.getContext('2d');
+                        canvas.height = viewport.height;
+                        canvas.width = viewport.width;
+                        await page.render({ canvasContext: context, viewport: viewport }).promise;
+                        
+                        uploadedFileData = canvas.toDataURL('image/jpeg').split(',')[1];
+                        uploadedFileType = 'image';
+                        filePreview.textContent = `🖼️ ${file.name}`;
+                    } else {
+                        // Normal text PDF
+                        uploadedFileData = text;
+                        uploadedFileType = 'text';
+                        filePreview.textContent = `📄 ${file.name}`;
+                    }
                 } 
                 else {
-                    // Treat as text
+                    // Text files
                     uploadedFileData = await file.text();
                     uploadedFileType = 'text';
                     filePreview.textContent = `📄 ${file.name}`;
