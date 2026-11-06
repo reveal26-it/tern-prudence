@@ -17,6 +17,7 @@
             --teal-mid: #00a88a;
             --teal-deep: #007a66;
             --text-light: #e0f0ec;
+            --red-alert: #ff4444;
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -85,18 +86,21 @@
         .circle.deep { border-color: var(--teal-deep); margin-left: -8px; }
         .brand h1 { font-family: 'Space Grotesk', sans-serif; font-size: 1.4rem; font-weight: 600; letter-spacing: -0.5px; }
         .brand p { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; color: var(--teal-main); opacity: 0.8; margin-left: 12px; }
-        .controls { display: flex; gap: 12px; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; }
+        
+        .controls { display: flex; gap: 12px; align-items: center; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; }
         .status-badge {
             padding: 6px 12px; border-radius: 20px; background: rgba(0, 212, 170, 0.1);
             border: 1px solid rgba(0, 212, 170, 0.2); color: var(--teal-main); display: flex; align-items: center; gap: 8px;
         }
         .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--teal-main); box-shadow: 0 0 8px var(--teal-main); }
+        
         button.action-btn {
             background: rgba(0, 212, 170, 0.1); border: 1px solid rgba(0, 212, 170, 0.2);
             color: var(--text-light); padding: 6px 16px; border-radius: 20px;
             font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; cursor: pointer; transition: all 0.2s;
         }
         button.action-btn:hover { background: rgba(0, 212, 170, 0.2); border-color: var(--teal-main); }
+        
         .chat-container {
             flex: 1; overflow-y: auto; padding: 24px;
             display: flex; flex-direction: column; gap: 16px; scroll-behavior: smooth;
@@ -114,21 +118,35 @@
             align-self: flex-start; background: rgba(15, 32, 40, 0.4);
             border: 1px solid rgba(0, 212, 170, 0.1); border-bottom-left-radius: 4px;
         }
+        
         .input-area {
             padding: 20px 24px; background: rgba(10, 20, 24, 0.9);
             border-top: 1px solid rgba(0, 212, 170, 0.1); display: flex; gap: 12px; align-items: center;
         }
-        .file-label {
-            cursor: pointer; font-size: 1.2rem; color: #a0b0b0; transition: color 0.2s; padding: 0 8px;
+        
+        /* Icons */
+        .icon-btn {
+            cursor: pointer; font-size: 1.2rem; color: #a0b0b0; transition: color 0.2s; 
+            padding: 0 4px; background: none; border: none;
         }
-        .file-label:hover { color: var(--teal-main); }
+        .icon-btn:hover { color: var(--teal-main); }
+        .icon-btn.recording { color: var(--red-alert); animation: pulse 1s infinite; }
+        
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+
         #file-upload { display: none; }
+        
         input[type="text"] {
             flex: 1; background: rgba(15, 32, 40, 0.6); border: 1px solid rgba(0, 212, 170, 0.2);
             padding: 14px 20px; border-radius: 40px; color: var(--text-light);
             font-family: 'Inter', sans-serif; font-size: 0.95rem; outline: none; transition: border 0.2s;
         }
         input[type="text"]:focus { border-color: var(--teal-main); box-shadow: 0 0 15px rgba(0, 212, 170, 0.15); }
+        
         .send-btn {
             background: linear-gradient(135deg, var(--teal-main) 0%, var(--teal-mid) 100%);
             border: none; color: var(--bg-dark); width: 50px; height: 50px;
@@ -173,6 +191,7 @@
                     <span class="status-dot" id="status-dot"></span>
                     <span id="status-text">Tiredness: 0%</span>
                 </div>
+                <button class="action-btn" id="speaker-toggle" onclick="toggleSpeaker()" title="Toggle Voice">🔊 Voice On</button>
                 <button class="action-btn" onclick="sleep()">Sleep</button>
             </div>
         </header>
@@ -180,9 +199,13 @@
         <div class="chat-container" id="chat-container"></div>
 
         <div class="input-area">
-            <!-- File Upload Button -->
-            <label class="file-label" for="file-upload">📎</label>
+            <!-- Document Upload -->
+            <label class="icon-btn" for="file-upload">📎</label>
             <input type="file" id="file-upload" accept="image/*, .pdf, .txt, .csv, .md" onchange="handleFileUpload(event)">
+            
+            <!-- Voice Recording -->
+            <button class="icon-btn" id="mic-btn" onclick="toggleMic()">🎤</button>
+            
             <div class="file-preview" id="file-preview">File loaded</div>
             
             <input type="text" id="user-input" placeholder="Ask or tell me something..." autocomplete="off" onkeypress="handleKeyPress(event)">
@@ -201,25 +224,103 @@
 
         let currentChatId = null;
         let uploadedFileData = null; 
-        let uploadedFileType = null; // 'text' or 'image'
+        let uploadedFileType = null; 
 
         const chatContainer = document.getElementById('chat-container');
         const userInput = document.getElementById('user-input');
         const chatList = document.getElementById('chat-list');
         const filePreview = document.getElementById('file-preview');
 
+        // --- VOICE MODE VARIABLES ---
+        let isSpeakerOn = true;
+        let isRecording = false;
+        const micBtn = document.getElementById('mic-btn');
+        const speakerToggle = document.getElementById('speaker-toggle');
+        const synth = window.speechSynthesis;
+        
+        // Setup Speech Recognition (Dictation)
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        let recognition = null;
+
+        if (SpeechRecognition) {
+            recognition = new SpeechRecognition();
+            recognition.continuous = false;
+            recognition.interimResults = false;
+            
+            recognition.onstart = () => {
+                isRecording = true;
+                micBtn.classList.add('recording');
+                userInput.placeholder = "Listening...";
+            };
+
+            recognition.onresult = (event) => {
+                const transcript = event.results[0][0].transcript;
+                userInput.value += transcript + " ";
+                sendMessage(); // Automatically send after speaking
+            };
+
+            recognition.onerror = (event) => {
+                console.error("Speech recognition error", event.error);
+                stopRecording();
+            };
+
+            recognition.onend = () => {
+                stopRecording();
+            };
+        }
+
+        function toggleMic() {
+            if (!recognition) {
+                alert("Voice dictation is not supported in this browser. Try Chrome or Safari.");
+                return;
+            }
+            if (isRecording) {
+                recognition.stop();
+            } else {
+                recognition.start();
+            }
+        }
+
+        function stopRecording() {
+            isRecording = false;
+            micBtn.classList.remove('recording');
+            userInput.placeholder = "Ask or tell me something...";
+        }
+
+        // Setup Text-to-Speech
+        function toggleSpeaker() {
+            isSpeakerOn = !isSpeakerOn;
+            speakerToggle.textContent = isSpeakerOn ? "🔊 Voice On" : "🔇 Voice Off";
+            if (!isSpeakerOn) synth.cancel();
+        }
+
+        function speakText(text) {
+            if (!isSpeakerOn) return;
+            synth.cancel(); // Stop current speech
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.rate = 1.0;
+            utterance.pitch = 1.0;
+            // Try to find a natural-sounding voice
+            const voices = synth.getVoices();
+            const preferredVoice = voices.find(v => v.name.includes("Google US English") || v.name.includes("Samantha") || v.name.includes("Female"));
+            if (preferredVoice) utterance.voice = preferredVoice;
+            synth.speak(utterance);
+        }
+
+        // --- UI & CHAT LOGIC ---
         window.onload = () => {
             loadChatList();
             if (!currentChatId) {
-                chatContainer.innerHTML = '<div class="message prudence">Hey there! I\'m Prudence. Upload an image or a document, or just ask me anything.</div>';
+                chatContainer.innerHTML = '<div class="message prudence">Hey there! I\'m Prudence. Upload a file, talk to me, or type below.</div>';
+            }
+            // Ensure voices load
+            if (speechSynthesis.onvoiceschanged !== undefined) {
+                speechSynthesis.onvoiceschanged = () => synth.getVoices();
             }
         };
 
-        function toggleSidebar() {
-            document.getElementById('sidebar').classList.toggle('open');
-        }
+        function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); }
 
-        // --- FILE UPLOAD LOGIC (Smart Fallback) ---
         async function handleFileUpload(event) {
             const file = event.target.files[0];
             if (!file) return;
@@ -231,7 +332,6 @@
 
             try {
                 if (file.type.startsWith("image/")) {
-                    // Image -> Base64
                     const reader = new FileReader();
                     reader.onload = (e) => {
                         uploadedFileData = e.target.result.split(',')[1];
@@ -241,7 +341,6 @@
                     reader.readAsDataURL(file);
                 } 
                 else if (file.type === "application/pdf") {
-                    // PDF -> Try Text, Fallback to Image
                     const arrayBuffer = await file.arrayBuffer();
                     const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
                     let text = "";
@@ -251,7 +350,6 @@
                         text += content.items.map(item => item.str).join(" ") + "\n";
                     }
 
-                    // If PDF has NO text (scanned), render page 1 as an image instead
                     if (text.trim().length < 10) {
                         filePreview.textContent = `Scanning PDF...`;
                         const page = await pdf.getPage(1);
@@ -261,19 +359,16 @@
                         canvas.height = viewport.height;
                         canvas.width = viewport.width;
                         await page.render({ canvasContext: context, viewport: viewport }).promise;
-                        
                         uploadedFileData = canvas.toDataURL('image/jpeg').split(',')[1];
                         uploadedFileType = 'image';
                         filePreview.textContent = `🖼️ ${file.name}`;
                     } else {
-                        // Normal text PDF
                         uploadedFileData = text;
                         uploadedFileType = 'text';
                         filePreview.textContent = `📄 ${file.name}`;
                     }
                 } 
                 else {
-                    // Text files
                     uploadedFileData = await file.text();
                     uploadedFileType = 'text';
                     filePreview.textContent = `📄 ${file.name}`;
@@ -284,7 +379,6 @@
             }
         }
 
-        // --- CHAT LOGIC ---
         async function loadChatList() {
             try {
                 const res = await fetch(`/api/chats/${sessionId}`);
@@ -427,13 +521,15 @@
                 const data = await response.json();
                 prudenceDiv.textContent = data.reply;
                 updateStatus(data.tiredness, data.state);
+                
+                // SPEAK THE TEXT
+                speakText(data.reply);
 
                 if (!currentChatId) {
                     currentChatId = data.chat_id;
                     loadChatList();
                 }
 
-                // Clear the file after sending
                 uploadedFileData = null;
                 uploadedFileType = null;
                 filePreview.style.display = 'none';
