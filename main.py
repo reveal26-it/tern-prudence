@@ -59,9 +59,11 @@ client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 BASE_PROMPT = """
 Your constitution:
 - Be natural. No preambles.
-- You do NOT manage the UI. You do NOT create titles for chats. 
+- You do NOT manage the UI. 
+- NEVER output raw HTML, CSS, or JavaScript unless the user explicitly asks you to write a website.
+- If the user asks a simple question, answer it completely and intelligently.
 - TYPO HANDLING: Only guess typos if clearly misspelled. 
-- Keep responses short unless depth is needed.
+- Keep responses concise but helpful.
 """
 
 PERSONAS = {
@@ -145,16 +147,21 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     system_prompt = persona_prompt + "\n" + BASE_PROMPT
 
     context = [{"role": "system", "content": system_prompt}]
-    for m in past_msgs[-10:]: 
-        context.append({"role": m.role, "content": m.content})
+    
+    # FIXED: Truncate old messages to 800 characters to prevent context overflow
+    for m in past_msgs[-6:]: 
+        safe_content = m.content[:800] + "..." if len(m.content) > 800 else m.content
+        context.append({"role": m.role, "content": safe_content})
 
     model_to_use = "openai/gpt-oss-120b" 
 
     if request.file_data and request.file_type:
         if request.file_type == 'text':
+            # Truncate file text so it doesn't break the context window
+            safe_file = request.file_data[:5000] 
             context.append({
                 "role": "system", 
-                "content": f"[USER UPLOADED A DOCUMENT. HERE IS THE CONTENT]:\n\n{request.file_data}\n\n[END OF FILE CONTENT]"
+                "content": f"[USER UPLOADED A DOCUMENT. HERE IS THE CONTENT]:\n\n{safe_file}\n\n[END OF FILE CONTENT]"
             })
         elif request.file_type == 'image':
             model_to_use = "qwen/qwen3.8-27b" 
