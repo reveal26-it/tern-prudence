@@ -9,10 +9,13 @@ import datetime
 import uuid
 
 # ============================================
-# 1. LOCAL DATABASE SETUP (SQLite)
+# 1. SUPABASE POSTGRES DATABASE SETUP
 # ============================================
-SQLALCHEMY_DATABASE_URL = "sqlite:///./prudence.db"
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+# REPLACE 'YOUR_SUPABASE_PASSWORD' WITH YOUR ACTUAL PASSWORD
+DATABASE_URL = "postgresql://postgres.wefbjzxefshopfkjkckj:YOUR_SUPABASE_PASSWORD@aws-1-eu-central-1.pooler.supabase.com:5432/postgres"
+
+# Connect securely
+engine = create_engine(DATABASE_URL, connect_args={"sslmode": "require"}, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -69,8 +72,8 @@ class ChatRequest(BaseModel):
     session_id: str
     chat_id: str | None = None
     message: str
-    file_data: str | None = None # Can be text string OR base64 image string
-    file_type: str | None = None # 'text' or 'image'
+    file_data: str | None = None 
+    file_type: str | None = None 
 
 class ChatResponse(BaseModel):
     reply: str
@@ -124,12 +127,11 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     past_msgs = db.query(DBMessage).filter(DBMessage.chat_id == chat_id).order_by(DBMessage.timestamp).all()
     
     context = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for m in past_msgs[-10:]: # Reduced to 10 to make room for file data
+    for m in past_msgs[-10:]: 
         context.append({"role": m.role, "content": m.content})
 
-    model_to_use = "openai/gpt-oss-120b" # Default text model
+    model_to_use = "openai/gpt-oss-120b" 
 
-    # Handle the file context
     if request.file_data and request.file_type:
         if request.file_type == 'text':
             context.append({
@@ -137,11 +139,8 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
                 "content": f"[USER UPLOADED A DOCUMENT. HERE IS THE CONTENT]:\n\n{request.file_data}\n\n[END OF FILE CONTENT]"
             })
         elif request.file_type == 'image':
-            model_to_use = "qwen/qwen3.8-27b" # Switch to Vision model
-            # Groq expects the image as a base64 data URL
+            model_to_use = "qwen/qwen3.8-27b" 
             image_url = f"data:image/jpeg;base64,{request.file_data}"
-            
-            # Inject the image as the user's message
             context.append({
                 "role": "user",
                 "content": [
