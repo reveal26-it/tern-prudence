@@ -7,6 +7,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    
     <style>
         :root {
             --bg-dark: #0a1418;
@@ -114,14 +116,19 @@
         }
         .input-area {
             padding: 20px 24px; background: rgba(10, 20, 24, 0.9);
-            border-top: 1px solid rgba(0, 212, 170, 0.1); display: flex; gap: 12px;
+            border-top: 1px solid rgba(0, 212, 170, 0.1); display: flex; gap: 12px; align-items: center;
         }
-        input {
+        .file-label {
+            cursor: pointer; font-size: 1.2rem; color: #a0b0b0; transition: color 0.2s; padding: 0 8px;
+        }
+        .file-label:hover { color: var(--teal-main); }
+        #file-upload { display: none; }
+        input[type="text"] {
             flex: 1; background: rgba(15, 32, 40, 0.6); border: 1px solid rgba(0, 212, 170, 0.2);
             padding: 14px 20px; border-radius: 40px; color: var(--text-light);
             font-family: 'Inter', sans-serif; font-size: 0.95rem; outline: none; transition: border 0.2s;
         }
-        input:focus { border-color: var(--teal-main); box-shadow: 0 0 15px rgba(0, 212, 170, 0.15); }
+        input[type="text"]:focus { border-color: var(--teal-main); box-shadow: 0 0 15px rgba(0, 212, 170, 0.15); }
         .send-btn {
             background: linear-gradient(135deg, var(--teal-main) 0%, var(--teal-mid) 100%);
             border: none; color: var(--bg-dark); width: 50px; height: 50px;
@@ -129,6 +136,12 @@
             cursor: pointer; font-size: 1.2rem; font-weight: bold; transition: transform 0.2s;
         }
         .send-btn:hover { transform: scale(1.05); box-shadow: 0 0 20px rgba(0, 212, 170, 0.4); }
+        
+        .file-preview {
+            display: none; font-size: 0.75rem; color: var(--teal-main); 
+            background: rgba(0, 212, 170, 0.1); padding: 4px 12px; border-radius: 12px; margin-right: 8px;
+        }
+
         @media (max-width: 768px) {
             .sidebar { position: absolute; height: 100%; z-index: 20; transform: translateX(-100%); }
             .sidebar.open { transform: translateX(0); }
@@ -167,12 +180,19 @@
         <div class="chat-container" id="chat-container"></div>
 
         <div class="input-area">
+            <!-- File Upload Button -->
+            <label class="file-label" for="file-upload">📎</label>
+            <input type="file" id="file-upload" accept="image/*, .pdf, .txt, .csv, .md" onchange="handleFileUpload(event)">
+            <div class="file-preview" id="file-preview">File loaded</div>
+            
             <input type="text" id="user-input" placeholder="Ask or tell me something..." autocomplete="off" onkeypress="handleKeyPress(event)">
             <button class="send-btn" onclick="sendMessage()">↑</button>
         </div>
     </div>
 
     <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+
         let sessionId = localStorage.getItem("prudence_session_id");
         if (!sessionId) {
             sessionId = "user_" + Math.random().toString(36).substr(2, 9);
@@ -180,14 +200,18 @@
         }
 
         let currentChatId = null;
+        let uploadedFileData = null; 
+        let uploadedFileType = null; // 'text' or 'image'
+
         const chatContainer = document.getElementById('chat-container');
         const userInput = document.getElementById('user-input');
         const chatList = document.getElementById('chat-list');
+        const filePreview = document.getElementById('file-preview');
 
         window.onload = () => {
             loadChatList();
             if (!currentChatId) {
-                chatContainer.innerHTML = '<div class="message prudence">Hey there! I\'m Prudence. What are we building today?</div>';
+                chatContainer.innerHTML = '<div class="message prudence">Hey there! I\'m Prudence. Upload an image or a document, or just ask me anything.</div>';
             }
         };
 
@@ -195,6 +219,56 @@
             document.getElementById('sidebar').classList.toggle('open');
         }
 
+        // --- FILE UPLOAD LOGIC ---
+        async function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            filePreview.style.display = 'inline-block';
+            filePreview.textContent = `Reading ${file.name}...`;
+            uploadedFileData = null;
+            uploadedFileType = null;
+
+            try {
+                if (file.type.startsWith("image/")) {
+                    // It's an image! Convert to Base64
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        // Remove the data:image/...;base64, prefix
+                        const base64String = e.target.result.split(',')[1];
+                        uploadedFileData = base64String;
+                        uploadedFileType = 'image';
+                        filePreview.textContent = `🖼️ ${file.name}`;
+                    };
+                    reader.readAsDataURL(file);
+                } 
+                else if (file.type === "application/pdf") {
+                    // It's a PDF! Extract text
+                    const arrayBuffer = await file.arrayBuffer();
+                    const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+                    let text = "";
+                    for (let i = 1; i <= pdf.numPages; i++) {
+                        const page = await pdf.getPage(i);
+                        const content = await page.getTextContent();
+                        text += content.items.map(item => item.str).join(" ") + "\n";
+                    }
+                    uploadedFileData = text;
+                    uploadedFileType = 'text';
+                    filePreview.textContent = `📄 ${file.name}`;
+                } 
+                else {
+                    // Treat as text
+                    uploadedFileData = await file.text();
+                    uploadedFileType = 'text';
+                    filePreview.textContent = `📄 ${file.name}`;
+                }
+            } catch (err) {
+                console.error(err);
+                filePreview.textContent = "Error reading file";
+            }
+        }
+
+        // --- CHAT LOGIC ---
         async function loadChatList() {
             try {
                 const res = await fetch(`/api/chats/${sessionId}`);
@@ -292,6 +366,10 @@
 
         function startNewChat() {
             currentChatId = null;
+            uploadedFileData = null;
+            uploadedFileType = null;
+            filePreview.style.display = 'none';
+            document.getElementById('file-upload').value = '';
             chatContainer.innerHTML = '<div class="message prudence">Hey there! I\'m Prudence. What are we building today?</div>';
             if(window.innerWidth <= 768) document.getElementById('sidebar').classList.remove('open');
         }
@@ -309,9 +387,10 @@
 
         async function sendMessage() {
             const text = userInput.value.trim();
-            if (!text) return;
+            if (!text && !uploadedFileData) return;
 
-            addMessage(text, 'user');
+            const displayMsg = text || "Please analyze this.";
+            addMessage(displayMsg, 'user');
             userInput.value = '';
 
             const prudenceDiv = addMessage('...', 'prudence');
@@ -323,7 +402,9 @@
                     body: JSON.stringify({ 
                         session_id: sessionId,
                         chat_id: currentChatId,
-                        message: text
+                        message: displayMsg,
+                        file_data: uploadedFileData,
+                        file_type: uploadedFileType
                     })
                 });
 
@@ -335,6 +416,12 @@
                     currentChatId = data.chat_id;
                     loadChatList();
                 }
+
+                // Clear the file after sending
+                uploadedFileData = null;
+                uploadedFileType = null;
+                filePreview.style.display = 'none';
+                document.getElementById('file-upload').value = '';
 
             } catch (error) {
                 prudenceDiv.textContent = "Connection failed.";
