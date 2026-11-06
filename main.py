@@ -69,6 +69,8 @@ class ChatRequest(BaseModel):
     session_id: str
     chat_id: str | None = None
     message: str
+    file_data: str | None = None # Can be text string OR base64 image string
+    file_type: str | None = None # 'text' or 'image'
 
 class ChatResponse(BaseModel):
     reply: str
@@ -120,13 +122,37 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     db.commit()
 
     past_msgs = db.query(DBMessage).filter(DBMessage.chat_id == chat_id).order_by(DBMessage.timestamp).all()
+    
     context = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for m in past_msgs[-30:]:
+    for m in past_msgs[-10:]: # Reduced to 10 to make room for file data
         context.append({"role": m.role, "content": m.content})
+
+    model_to_use = "openai/gpt-oss-120b" # Default text model
+
+    # Handle the file context
+    if request.file_data and request.file_type:
+        if request.file_type == 'text':
+            context.append({
+                "role": "system", 
+                "content": f"[USER UPLOADED A DOCUMENT. HERE IS THE CONTENT]:\n\n{request.file_data}\n\n[END OF FILE CONTENT]"
+            })
+        elif request.file_type == 'image':
+            model_to_use = "qwen/qwen3.8-27b" # Switch to Vision model
+            # Groq expects the image as a base64 data URL
+            image_url = f"data:image/jpeg;base64,{request.file_data}"
+            
+            # Inject the image as the user's message
+            context.append({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": request.message},
+                    {"type": "image_url", "image_url": {"url": image_url}}
+                ]
+            })
 
     try:
         response = client.chat.completions.create(
-            model="openai/gpt-oss-120b",
+            model=model_to_use,
             messages=context,
             max_tokens=1000,
             temperature=0.7
