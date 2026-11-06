@@ -12,7 +12,7 @@ import json
 # ============================================
 # 1. SUPABASE DATABASE SETUP
 # ============================================
-DATABASE_URL = "postgresql://postgres.wefbjzxefshopfkjkckj:QIltOVZ6Oz4S3If4@aws-1-eu-central-1.pooler.supabase.com:5432/postgres"
+DATABASE_URL = "postgresql://postgres.webfjzxefshopfkjkckj:QIltOVZ6Oz4S3If4@aws-1-eu-central-1.pooler.supabase.com:5432/postgres"
 
 engine = create_engine(DATABASE_URL, connect_args={"sslmode": "require"}, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -58,7 +58,9 @@ client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 BASE_PROMPT = """
 Your constitution:
-- Be natural. No preambles.
+- Talk in plain, conversational text. 
+- NEVER use markdown symbols like #, ##, -, *, or | in normal conversation.
+- Only use markdown code blocks if the user explicitly asks for code.
 - You do NOT manage the UI. 
 - NEVER output raw HTML, CSS, or JavaScript unless the user explicitly asks you to write a website.
 - If the user asks a simple question, answer it completely and intelligently.
@@ -148,7 +150,7 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
 
     context = [{"role": "system", "content": system_prompt}]
     
-    # FIXED: Truncate old messages to 800 characters to prevent context overflow
+    # Feed the last 6 messages, truncated to avoid context overflow
     for m in past_msgs[-6:]: 
         safe_content = m.content[:800] + "..." if len(m.content) > 800 else m.content
         context.append({"role": m.role, "content": safe_content})
@@ -157,7 +159,6 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
 
     if request.file_data and request.file_type:
         if request.file_type == 'text':
-            # Truncate file text so it doesn't break the context window
             safe_file = request.file_data[:5000] 
             context.append({
                 "role": "system", 
