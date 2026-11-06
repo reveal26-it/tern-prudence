@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prudence — TERN</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #0a1418;
+            --bg-mid: #0f2028;
+            --teal-main: #00d4aa;
+            --teal-mid: #00a88a;
+            --teal-deep: #007a66;
+            --text-light: #e0f0ec;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: linear-gradient(135deg, var(--bg-dark) 0%, var(--bg-mid) 50%, var(--bg-dark) 100%);
+            color: var(--text-light);
+            font-family: 'Inter', sans-serif;
+            height: 100vh;
+            display: flex;
+            overflow: hidden;
+        }
+        .sidebar {
+            width: 280px;
+            background: rgba(10, 20, 24, 0.95);
+            border-right: 1px solid rgba(0, 212, 170, 0.1);
+            display: flex;
+            flex-direction: column;
+            transition: transform 0.3s ease;
+        }
+        .sidebar-header { padding: 20px; border-bottom: 1px solid rgba(0, 212, 170, 0.1); }
+        .new-chat-btn {
+            width: 100%; padding: 12px; background: rgba(0, 212, 170, 0.1);
+            border: 1px solid rgba(0, 212, 170, 0.3); border-radius: 8px;
+            color: var(--teal-main); font-family: 'JetBrains Mono', monospace;
+            font-weight: 500; cursor: pointer; transition: all 0.2s;
+        }
+        .new-chat-btn:hover { background: rgba(0, 212, 170, 0.2); }
+        .chat-list { flex: 1; overflow-y: auto; padding: 10px; }
+        .chat-item {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 12px; margin-bottom: 4px; border-radius: 8px; cursor: pointer;
+            font-size: 0.85rem; color: #a0b0b0; transition: background 0.2s; position: relative;
+        }
+        .chat-item:hover { background: rgba(0, 212, 170, 0.1); color: var(--text-light); }
+        .chat-item.active { background: rgba(0, 212, 170, 0.15); color: var(--teal-main); border-left: 3px solid var(--teal-main); }
+        .chat-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; margin-right: 8px; cursor: text; }
+        .options-btn {
+            background: none; border: none; color: #a0b0b0; cursor: pointer;
+            font-size: 1.2rem; padding: 0 4px; opacity: 0; transition: opacity 0.2s;
+        }
+        .chat-item:hover .options-btn { opacity: 1; }
+        .options-btn:hover { color: var(--teal-main); }
+        .dropdown {
+            position: absolute; right: 10px; top: 40px; background: #152a33;
+            border: 1px solid rgba(0, 212, 170, 0.3); border-radius: 8px; padding: 4px;
+            z-index: 100; display: none; box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        }
+        .dropdown.show { display: block; }
+        .dropdown button {
+            display: block; width: 100%; text-align: left; background: none;
+            border: none; color: var(--text-light); padding: 8px 12px;
+            font-size: 0.8rem; cursor: pointer; border-radius: 4px; font-family: 'Inter', sans-serif;
+        }
+        .dropdown button:hover { background: rgba(0, 212, 170, 0.2); color: var(--teal-main); }
+        .dropdown button.delete { color: #ff6b6b; }
+        .dropdown button.delete:hover { background: rgba(255, 107, 107, 0.1); }
+        .main-area { flex: 1; display: flex; flex-direction: column; position: relative; }
+        header {
+            padding: 15px 24px; display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 1px solid rgba(0, 212, 170, 0.1); background: rgba(10, 20, 24, 0.8);
+            backdrop-filter: blur(10px); z-index: 10;
+        }
+        .brand { display: flex; align-items: center; gap: 12px; }
+        .logo { display: flex; align-items: center; gap: 4px; }
+        .circle { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--teal-main); }
+        .circle.mid { border-color: var(--teal-mid); margin-left: -8px; }
+        .circle.deep { border-color: var(--teal-deep); margin-left: -8px; }
+        .brand h1 { font-family: 'Space Grotesk', sans-serif; font-size: 1.4rem; font-weight: 600; letter-spacing: -0.5px; }
+        .brand p { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; color: var(--teal-main); opacity: 0.8; margin-left: 12px; }
+        .controls { display: flex; gap: 12px; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; }
+        .status-badge {
+            padding: 6px 12px; border-radius: 20px; background: rgba(0, 212, 170, 0.1);
+            border: 1px solid rgba(0, 212, 170, 0.2); color: var(--teal-main); display: flex; align-items: center; gap: 8px;
+        }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--teal-main); box-shadow: 0 0 8px var(--teal-main); }
+        button.action-btn {
+            background: rgba(0, 212, 170, 0.1); border: 1px solid rgba(0, 212, 170, 0.2);
+            color: var(--text-light); padding: 6px 16px; border-radius: 20px;
+            font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; cursor: pointer; transition: all 0.2s;
+        }
+        button.action-btn:hover { background: rgba(0, 212, 170, 0.2); border-color: var(--teal-main); }
+        .chat-container {
+            flex: 1; overflow-y: auto; padding: 24px;
+            display: flex; flex-direction: column; gap: 16px; scroll-behavior: smooth;
+        }
+        .message {
+            max-width: 80%; padding: 14px 18px; border-radius: 20px;
+            line-height: 1.5; font-size: 0.95rem; animation: fadeIn 0.3s ease; white-space: pre-wrap;
+        }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .message.user {
+            align-self: flex-end; background: rgba(15, 32, 40, 0.8);
+            border: 1px solid rgba(0, 212, 170, 0.2); border-bottom-right-radius: 4px;
+        }
+        .message.prudence {
+            align-self: flex-start; background: rgba(15, 32, 40, 0.4);
+            border: 1px solid rgba(0, 212, 170, 0.1); border-bottom-left-radius: 4px;
+        }
+        .input-area {
+            padding: 20px 24px; background: rgba(10, 20, 24, 0.9);
+            border-top: 1px solid rgba(0, 212, 170, 0.1); display: flex; gap: 12px;
+        }
+        input {
+            flex: 1; background: rgba(15, 32, 40, 0.6); border: 1px solid rgba(0, 212, 170, 0.2);
+            padding: 14px 20px; border-radius: 40px; color: var(--text-light);
+            font-family: 'Inter', sans-serif; font-size: 0.95rem; outline: none; transition: border 0.2s;
+        }
+        input:focus { border-color: var(--teal-main); box-shadow: 0 0 15px rgba(0, 212, 170, 0.15); }
+        .send-btn {
+            background: linear-gradient(135deg, var(--teal-main) 0%, var(--teal-mid) 100%);
+            border: none; color: var(--bg-dark); width: 50px; height: 50px;
+            border-radius: 50%; display: flex; justify-content: center; align-items: center;
+            cursor: pointer; font-size: 1.2rem; font-weight: bold; transition: transform 0.2s;
+        }
+        .send-btn:hover { transform: scale(1.05); box-shadow: 0 0 20px rgba(0, 212, 170, 0.4); }
+        @media (max-width: 768px) {
+            .sidebar { position: absolute; height: 100%; z-index: 20; transform: translateX(-100%); }
+            .sidebar.open { transform: translateX(0); }
+            .brand p { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <button class="new-chat-btn" onclick="startNewChat()">+ New Chat</button>
+        </div>
+        <div class="chat-list" id="chat-list"></div>
+    </div>
+
+    <div class="main-area">
+        <header>
+            <div class="brand">
+                <button class="action-btn" onclick="toggleSidebar()" style="margin-right: 10px;">☰</button>
+                <div class="logo">
+                    <div class="circle"></div><div class="circle mid"></div><div class="circle deep"></div>
+                </div>
+                <h1>Prudence</h1>
+                <p>triune · co-creator</p>
+            </div>
+            <div class="controls">
+                <div class="status-badge">
+                    <span class="status-dot" id="status-dot"></span>
+                    <span id="status-text">Tiredness: 0%</span>
+                </div>
+                <button class="action-btn" onclick="sleep()">Sleep</button>
+            </div>
+        </header>
+
+        <div class="chat-container" id="chat-container"></div>
+
+        <div class="input-area">
+            <input type="text" id="user-input" placeholder="Ask or tell me something..." autocomplete="off" onkeypress="handleKeyPress(event)">
+            <button class="send-btn" onclick="sendMessage()">↑</button>
+        </div>
+    </div>
+
+    <script>
+        let sessionId = localStorage.getItem("prudence_session_id");
+        if (!sessionId) {
+            sessionId = "user_" + Math.random().toString(36).substr(2, 9);
+            localStorage.setItem("prudence_session_id", sessionId);
+        }
+
+        let currentChatId = null;
+        const chatContainer = document.getElementById('chat-container');
+        const userInput = document.getElementById('user-input');
+        const chatList = document.getElementById('chat-list');
+
+        window.onload = () => {
+            loadChatList();
+            if (!currentChatId) {
+                chatContainer.innerHTML = '<div class="message prudence">Hey there! I\'m Prudence. What are we building today?</div>';
+            }
+        };
+
+        function toggleSidebar() {
+            document.getElementById('sidebar').classList.toggle('open');
+        }
+
+        async function loadChatList() {
+            try {
+                const res = await fetch(`/api/chats/${sessionId}`);
+                const chats = await res.json();
+                
+                chatList.innerHTML = '';
+                chats.forEach(chat => {
+                    const div = document.createElement('div');
+                    div.className = `chat-item ${chat.id === currentChatId ? 'active' : ''}`;
+                    
+                    const titleSpan = document.createElement('span');
+                    titleSpan.className = 'chat-title';
+                    titleSpan.textContent = chat.title;
+                    titleSpan.ondblclick = (e) => { e.stopPropagation(); renameChat(chat.id, chat.title); };
+                    
+                    const optBtn = document.createElement('button');
+                    optBtn.className = 'options-btn';
+                    optBtn.innerHTML = '⋮';
+                    
+                    const dropdown = document.createElement('div');
+                    dropdown.className = 'dropdown';
+                    
+                    const renameBtn = document.createElement('button');
+                    renameBtn.textContent = 'Rename';
+                    renameBtn.onclick = (e) => { e.stopPropagation(); renameChat(chat.id, chat.title); };
+                    
+                    const deleteBtn = document.createElement('button');
+                    deleteBtn.className = 'delete';
+                    deleteBtn.textContent = 'Delete';
+                    deleteBtn.onclick = (e) => { e.stopPropagation(); deleteChat(chat.id); };
+                    
+                    dropdown.appendChild(renameBtn);
+                    dropdown.appendChild(deleteBtn);
+                    
+                    div.appendChild(titleSpan);
+                    div.appendChild(optBtn);
+                    div.appendChild(dropdown);
+
+                    div.onclick = () => loadChat(chat.id);
+                    optBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        document.querySelectorAll('.dropdown').forEach(d => d.classList.remove('show'));
+                        dropdown.classList.toggle('show');
+                    };
+
+                    chatList.appendChild(div);
+                });
+            } catch (e) { console.error("Could not load chats", e); }
+        }
+
+        document.addEventListener('click', () => {
+            document.querySelectorAll('.dropdown').forEach(d => d.classList.remove('show'));
+        });
+
+        async function loadChat(chatId) {
+            currentChatId = chatId;
+            chatContainer.innerHTML = ''; 
+            
+            try {
+                const res = await fetch(`/api/chat/${chatId}`);
+                const messages = await res.json();
+                
+                messages.forEach(msg => {
+                    addMessage(msg.content, msg.role === 'assistant' ? 'prudence' : 'user');
+                });
+                
+                loadChatList(); 
+                if(window.innerWidth <= 768) toggleSidebar();
+            } catch (e) { console.error(e); }
+        }
+
+        async function renameChat(chatId, currentTitle) {
+            const newTitle = prompt("Enter new chat name:", currentTitle);
+            if (newTitle && newTitle.trim() !== "") {
+                try {
+                    await fetch(`/api/chats/${chatId}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ title: newTitle })
+                    });
+                    loadChatList();
+                } catch (e) { console.error(e); }
+            }
+        }
+
+        async function deleteChat(chatId) {
+            if (confirm("Are you sure you want to delete this chat?")) {
+                try {
+                    await fetch(`/api/chats/${chatId}`, { method: 'DELETE' });
+                    if (currentChatId === chatId) startNewChat();
+                    loadChatList();
+                } catch (e) { console.error(e); }
+            }
+        }
+
+        function startNewChat() {
+            currentChatId = null;
+            chatContainer.innerHTML = '<div class="message prudence">Hey there! I\'m Prudence. What are we building today?</div>';
+            if(window.innerWidth <= 768) document.getElementById('sidebar').classList.remove('open');
+        }
+
+        function handleKeyPress(e) { if (e.key === 'Enter') sendMessage(); }
+
+        function addMessage(text, role) {
+            const div = document.createElement('div');
+            div.className = `message ${role}`;
+            div.textContent = text;
+            chatContainer.appendChild(div);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+            return div;
+        }
+
+        async function sendMessage() {
+            const text = userInput.value.trim();
+            if (!text) return;
+
+            addMessage(text, 'user');
+            userInput.value = '';
+
+            const prudenceDiv = addMessage('...', 'prudence');
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        session_id: sessionId,
+                        chat_id: currentChatId,
+                        message: text
+                    })
+                });
+
+                const data = await response.json();
+                prudenceDiv.textContent = data.reply;
+                updateStatus(data.tiredness, data.state);
+
+                if (!currentChatId) {
+                    currentChatId = data.chat_id;
+                    loadChatList();
+                }
+
+            } catch (error) {
+                prudenceDiv.textContent = "Connection failed.";
+            }
+        }
+
+        async function sleep() {
+            try {
+                await fetch('/api/sleep', { 
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session_id: sessionId, message: "sleep" })
+                });
+                updateStatus(5, 'awake');
+                addMessage("I feel refreshed. What's next?", "prudence");
+            } catch (error) { console.error(error); }
+        }
+
+        function updateStatus(tiredness, state) {
+            document.getElementById('status-text').textContent = `Tiredness: ${tiredness}%`;
+            const dot = document.getElementById('status-dot');
+            if (state === 'dead' || tiredness > 90) {
+                dot.style.background = '#ff4444'; 
+                dot.style.boxShadow = '0 0 8px #ff4444';
+            } else if (tiredness > 60) {
+                dot.style.background = '#f39c12'; 
+                dot.style.boxShadow = '0 0 8px #f39c12';
+            } else {
+                dot.style.background = 'var(--teal-main)'; 
+                dot.style.boxShadow = '0 0 8px var(--teal-main)';
+            }
+        }
+    </script>
+</body>
+</html>
