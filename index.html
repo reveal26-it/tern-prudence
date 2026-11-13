@@ -274,13 +274,49 @@
         }
         function stopRecording() { isRecording = false; micBtn.classList.remove('recording'); userInput.placeholder = "Ask or tell me something..."; }
         function toggleSpeaker() { isSpeakerOn = !isSpeakerOn; speakerToggle.textContent = isSpeakerOn ? "🔊" : "🔇"; if (!isSpeakerOn) synth.cancel(); }
+        
+        // --- UPGRADED NATURAL VOICE LOGIC ---
         function speakText(text) {
             if (!isSpeakerOn) return;
             synth.cancel();
+            
             const utterance = new SpeechSynthesisUtterance(text);
             const voices = synth.getVoices();
-            const preferredVoice = voices.find(v => v.name.includes("Google US English") || v.name.includes("Samantha") || v.name.includes("Female"));
-            if (preferredVoice) utterance.voice = preferredVoice;
+            
+            // Priority list for the most natural, human-sounding voices available on OS
+            const preferredVoices = [
+                'Google US English',           // Chrome on Windows/Mac (Very natural)
+                'Samantha',                    // Mac / iOS (Very natural)
+                'Microsoft Aria Online',       // Edge on Windows (Neural)
+                'Microsoft Jenny Online',      // Edge on Windows (Neural)
+                'Google UK English Female',    // Chrome
+                'Karen',                       // Mac / iOS
+                'Moira'                        // Mac / iOS
+            ];
+
+            let selectedVoice = null;
+            for (let name of preferredVoices) {
+                selectedVoice = voices.find(v => v.name.includes(name));
+                if (selectedVoice) break;
+            }
+            
+            // Fallback to any English female voice if the preferred ones aren't found
+            if (!selectedVoice) {
+                selectedVoice = voices.find(v => v.lang.startsWith('en') && v.name.includes('Female'));
+            }
+            if (!selectedVoice) {
+                selectedVoice = voices.find(v => v.lang.startsWith('en'));
+            }
+
+            if (selectedVoice) {
+                utterance.voice = selectedVoice;
+            }
+
+            // Adjust pitch and rate to sound more human
+            utterance.rate = 1.05; 
+            utterance.pitch = 1.0;
+            utterance.volume = 1.0;
+            
             synth.speak(utterance);
         }
 
@@ -443,7 +479,6 @@
             filePreview.style.display = 'none'; document.getElementById('file-upload').value = '';
             chatContainer.innerHTML = '<div class="message prudence">Hey there! I\'m Prudence. What are we building today?</div>';
             
-            // Automatically reset tiredness and consolidate previous chat
             try {
                 await fetch('/api/sleep', { 
                     method: 'POST', headers: { 'Content-Type': 'application/json' }, 
