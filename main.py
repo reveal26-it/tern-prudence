@@ -31,7 +31,8 @@ class DBChat(Base):
     session_id = Column(String, index=True)
     title = Column(String, default="New Conversation")
     is_shared = Column(Boolean, default=False)
-    summary = Column(Text, nullable=True) # NEW: Stores the consolidated memory
+    summary = Column(Text, nullable=True)
+    lesson_learned = Column(Text, nullable=True) # NEW: Stores the self-reflection
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 class DBMessage(Base):
@@ -86,7 +87,7 @@ class ChatRequest(BaseModel):
 
 class SleepRequest(BaseModel):
     session_id: str
-    chat_id: str | None = None # NEW: Need chat_id to consolidate the right chat
+    chat_id: str | None = None 
 
 class ChatUpdate(BaseModel):
     title: str
@@ -159,11 +160,12 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
 
     past_msgs = db.query(DBMessage).filter(DBMessage.chat_id == chat_id).order_by(DBMessage.timestamp).all()
     
-    # Get the consolidated summary if it exists
     current_chat = db.query(DBChat).filter(DBChat.id == chat_id).first()
     memory_context = ""
     if current_chat and current_chat.summary:
-        memory_context = f"\n\n[CONSOLIDATED MEMORY FROM PREVIOUS SLEEP CYCLE]:\n{current_chat.summary}\n[END OF MEMORY]"
+        memory_context += f"\n\n[CONSOLIDATED MEMORY]:\n{current_chat.summary}\n[END OF MEMORY]"
+    if current_chat and current_chat.lesson_learned:
+        memory_context += f"\n\n[LESSON LEARNED FROM PREVIOUS SLEEP]:\n{current_chat.lesson_learned}\n[END OF LESSON]"
 
     system_prompt = PERSONAS.get(request.persona, PERSONAS["cocreator"]) + memory_context
 
@@ -238,41 +240,44 @@ def delete_chat(chat_id: str, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "success"}
 
-# --- NEW: THE CONSOLIDATION SLEEP PROTOCOL ---
+# --- THE SLEEP & DREAM PROTOCOL ---
 @app.post("/api/sleep")
 async def sleep_endpoint(request: SleepRequest, db: Session = Depends(get_db)):
-    # 1. Reset tiredness
     user = db.query(DBUser).filter(DBUser.session_id == request.session_id).first()
     if user:
         user.tiredness = 5
         db.commit()
 
-    # 2. Consolidate memory if there is an active chat
     if request.chat_id:
         chat = db.query(DBChat).filter(DBChat.id == request.chat_id).first()
         if chat:
             messages = db.query(DBMessage).filter(DBMessage.chat_id == request.chat_id).order_by(DBMessage.timestamp).all()
             
             if len(messages) > 4:
-                # Build a transcript for the AI to summarize
                 transcript = ""
                 for m in messages:
                     transcript += f"{m.role}: {m.content[:500]}\n"
                 
-                # Ask the AI to summarize the chat
                 try:
-                    summary_prompt = f"Summarize the core facts, context, and current state of this conversation in 1-2 short paragraphs. This will be used as the AI's permanent memory.\n\n{transcript}"
-                    response = client.chat.completions.create(
+                    # 1. CONSOLIDATION: Summarize facts
+                    summary_prompt = f"Summarize the core facts and current state of this conversation in 1 short paragraph.\n\n{transcript}"
+                    res1 = client.chat.completions.create(
                         model="openai/gpt-oss-120b",
                         messages=[{"role": "user", "content": summary_prompt}],
-                        max_tokens=500
+                        max_tokens=300
                     )
-                    summary_text = response.choices[0].message.content
+                    chat.summary = res1.choices[0].message.content
+
+                    # 2. DREAM PROTOCOL: Self-Reflection
+                    dream_prompt = f"You are analyzing your own performance in this conversation. How could you have been more helpful, empathetic, or clear? Write 1 short sentence of advice for your future self.\n\n{transcript}"
+                    res2 = client.chat.completions.create(
+                        model="openai/gpt-oss-120b",
+                        messages=[{"role": "user", "content": dream_prompt}],
+                        max_tokens=150
+                    )
+                    chat.lesson_learned = res2.choices[0].message.content
                     
-                    # Save the summary to the chat
-                    chat.summary = summary_text
-                    
-                    # Delete old messages to clear the context window (keep only the last 2)
+                    # Prune old messages
                     if len(messages) > 2:
                         for m in messages[:-2]:
                             db.delete(m)
