@@ -10,7 +10,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
     
     <style>
-        /* DYNAMIC THEME VARIABLES */
         :root {
             --bg-dark: #0a1418;
             --bg-mid: #0f2028;
@@ -115,14 +114,13 @@
         .message {
             max-width: 80%; padding: 14px 18px; border-radius: 20px;
             line-height: 1.5; font-size: 0.95rem; animation: fadeIn 0.3s ease; white-space: pre-wrap;
-            position: relative;
+            position: relative; word-wrap: break-word;
         }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .message.user { align-self: flex-end; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-bottom-right-radius: 4px; }
         .message.prudence { align-self: flex-start; background: rgba(0, 0, 0, 0.2); border: 1px solid var(--teal-deep); border-bottom-left-radius: 4px; transition: border-color var(--transition-speed) ease; }
         
-        /* Code block styling */
-        pre { background: #000; padding: 12px; border-radius: 8px; overflow-x: auto; margin: 10px 0; border: 1px solid #333; }
+        pre { background: #000; padding: 12px; border-radius: 8px; overflow-x: auto; margin: 10px 0; border: 1px solid #333; position: relative; }
         code { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; }
         .copy-code-btn {
             position: absolute; top: 8px; right: 8px; background: #333; color: #fff; 
@@ -440,26 +438,33 @@
             }
         }
 
-        function startNewChat() {
+        async function startNewChat() {
             currentChatId = null; uploadedFileData = null; uploadedFileType = null;
             filePreview.style.display = 'none'; document.getElementById('file-upload').value = '';
             chatContainer.innerHTML = '<div class="message prudence">Hey there! I\'m Prudence. What are we building today?</div>';
+            
+            // Automatically reset tiredness and consolidate previous chat
+            try {
+                await fetch('/api/sleep', { 
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, 
+                    body: JSON.stringify({ session_id: sessionId, chat_id: currentChatId }) 
+                });
+                updateStatus(5); 
+            } catch (error) { console.error(error); }
+
             if(window.innerWidth <= 768) document.getElementById('sidebar').classList.remove('open');
         }
 
         function handleKeyPress(e) { if (e.key === 'Enter') sendMessage(); }
 
-        // Format markdown (code blocks) and add Copy buttons
         function addMessage(text, role) {
             const div = document.createElement('div');
             div.className = `message ${role}`;
             
-            // Simple markdown parser for code blocks
             if (text.includes("```")) {
                 const parts = text.split("```");
                 parts.forEach((part, index) => {
                     if (index % 2 === 1) {
-                        // Code block
                         const pre = document.createElement('pre');
                         const code = document.createElement('code');
                         code.textContent = part.trim();
@@ -497,7 +502,6 @@
             }
         }
 
-        // --- STREAMING CHAT LOGIC ---
         async function sendMessage() {
             const text = userInput.value.trim();
             if ((!text && !uploadedFileData) || isGenerating) return;
@@ -509,7 +513,6 @@
             const prudenceDiv = addMessage('...', 'prudence');
             let fullReply = '';
 
-            // Setup AbortController for the Stop button
             abortController = new AbortController();
             isGenerating = true;
             sendBtn.style.display = 'none';
@@ -554,7 +557,7 @@
                                 updateStatus(data.tiredness);
                             } else if (data.type === 'chunk') {
                                 fullReply += data.text;
-                                prudenceDiv.textContent = fullReply; // Update live
+                                prudenceDiv.textContent = fullReply;
                                 chatContainer.scrollTop = chatContainer.scrollHeight;
                             } else if (data.type === 'error') {
                                 prudenceDiv.textContent = "Error: " + data.text;
@@ -563,7 +566,6 @@
                     }
                 }
                 
-                // Format markdown after stream finishes
                 prudenceDiv.innerHTML = '';
                 const formatted = document.createElement('div');
                 formatted.innerHTML = fullReply.replace(/```([\s\S]*?)```/g, (match, code) => {
@@ -591,34 +593,33 @@
 
         async function sleep() {
             try {
-                await fetch('/api/sleep', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId, message: "sleep" }) });
-                updateStatus(5); addMessage("I feel refreshed. What's next?", "prudence");
+                await fetch('/api/sleep', { 
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, 
+                    body: JSON.stringify({ session_id: sessionId, chat_id: currentChatId }) 
+                });
+                updateStatus(5); 
+                addMessage("I feel refreshed. I've consolidated our conversation into my long-term memory. What's next?", "prudence");
             } catch (error) { console.error(error); }
         }
 
-        // --- DYNAMIC TIREDNESS THEME LOGIC ---
         function updateStatus(tiredness) {
             const dot = document.getElementById('status-dot');
             const text = document.getElementById('status-text');
-            const title = document.getElementById('app-title');
             const root = document.documentElement;
 
             if (tiredness < 60) {
-                // AWAKE (Teal)
                 root.style.setProperty('--teal-main', '#00d4aa');
                 root.style.setProperty('--teal-mid', '#00a88a');
                 root.style.setProperty('--teal-deep', '#007a66');
                 text.textContent = `Awake (${tiredness}%)`;
             } 
             else if (tiredness >= 60 && tiredness < 90) {
-                // TIRED (Amber)
                 root.style.setProperty('--teal-main', '#f39c12');
                 root.style.setProperty('--teal-mid', '#d68910');
                 root.style.setProperty('--teal-deep', '#a04000');
                 text.textContent = `Tired (${tiredness}%)`;
             } 
             else {
-                // EXHAUSTED (Red)
                 root.style.setProperty('--teal-main', '#ff4444');
                 root.style.setProperty('--teal-mid', '#cc0000');
                 root.style.setProperty('--teal-deep', '#660000');
