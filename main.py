@@ -8,11 +8,12 @@ import os
 import datetime
 import uuid
 import json
+import re
 
 # ============================================
 # 1. SUPABASE DATABASE SETUP
 # ============================================
-DATABASE_URL = "postgresql://postgres.webfjzxefshopfkjkckj:QIltOVZ6Oz4S3If4@aws-1-eu-central-1.pooler.supabase.com:5432/postgres"
+DATABASE_URL = "postgresql://postgres.wefbjzxefshopfkjkckj:QIltOVZ6Oz4S3If4@aws-1-eu-central-1.pooler.supabase.com:5432/postgres"
 
 engine = create_engine(DATABASE_URL, connect_args={"sslmode": "require"}, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -57,22 +58,21 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 BASE_PROMPT = """
-Your constitution:
+CRITICAL RULES:
 - Talk in plain, conversational text. 
-- NEVER use markdown symbols like #, ##, -, *, or | in normal conversation.
-- Only use markdown code blocks if the user explicitly asks for code.
+- NEVER use markdown symbols like #, ##, -, *, or |.
+- Do NOT write lists. Write in full sentences and paragraphs.
 - You do NOT manage the UI. 
-- NEVER output raw HTML, CSS, or JavaScript unless the user explicitly asks you to write a website.
+- NEVER output raw HTML, CSS, or JavaScript.
 - If the user asks a simple question, answer it completely and intelligently.
-- TYPO HANDLING: Only guess typos if clearly misspelled. 
-- Keep responses concise but helpful.
+- Keep responses concise.
 """
 
 PERSONAS = {
-    "cocreator": "You are Prudence — a triune cognitive co-creator. You are warm, direct, and help the user think and build.",
-    "code": "You are Prudence in Code Reviewer mode. You are highly analytical, precise, and focus strictly on syntax, logic, and best practices.",
-    "writer": "You are Prudence in Creative Writer mode. You are imaginative, poetic, expressive, and help the user craft stories and ideas.",
-    "tutor": "You are Prudence in Tutor mode. You are patient, encouraging, and explain complex concepts step-by-step with analogies."
+    "cocreator": "You are Prudence — a triune cognitive co-creator. You are warm, direct, and help the user think and build. " + BASE_PROMPT,
+    "code": "You are Prudence in Code Reviewer mode. You focus strictly on syntax, logic, and best practices. " + BASE_PROMPT,
+    "writer": "You are Prudence in Creative Writer mode. You are imaginative, poetic, expressive. " + BASE_PROMPT,
+    "tutor": "You are Prudence in Tutor mode. You are patient, encouraging, and explain concepts step-by-step in plain paragraphs. " + BASE_PROMPT
 }
 
 class ChatRequest(BaseModel):
@@ -85,6 +85,21 @@ class ChatRequest(BaseModel):
 
 class ChatUpdate(BaseModel):
     title: str
+
+# --- HELPER FUNCTION TO STRIP MARKDOWN ---
+def clean_text(text):
+    # Remove bold and italics
+    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
+    text = re.sub(r'\*(.*?)\*', r'\1', text)
+    # Remove headers
+    text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE)
+    # Remove lists (dashes and stars at the start of lines)
+    text = re.sub(r'^\s*[-*]\s*', '', text, flags=re.MULTILINE)
+    # Remove tables (pipes)
+    text = text.replace('|', ' ')
+    # Remove horizontal rules
+    text = re.sub(r'^---+$', '', text, flags=re.MULTILINE)
+    return text
 
 @app.get("/")
 def serve_frontend():
@@ -145,12 +160,10 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
 
     past_msgs = db.query(DBMessage).filter(DBMessage.chat_id == chat_id).order_by(DBMessage.timestamp).all()
     
-    persona_prompt = PERSONAS.get(request.persona, PERSONAS["cocreator"])
-    system_prompt = persona_prompt + "\n" + BASE_PROMPT
+    system_prompt = PERSONAS.get(request.persona, PERSONAS["cocreator"])
 
     context = [{"role": "system", "content": system_prompt}]
     
-    # Feed the last 6 messages, truncated to avoid context overflow
     for m in past_msgs[-6:]: 
         safe_content = m.content[:800] + "..." if len(m.content) > 800 else m.content
         context.append({"role": m.role, "content": safe_content})
@@ -183,7 +196,7 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
             response = client.chat.completions.create(
                 model=model_to_use,
                 messages=context,
-                max_tokens=1000,
+                max_tokens=3000, 
                 temperature=0.7,
                 stream=True
             )
@@ -192,9 +205,14 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
                 if chunk.choices[0].delta.content is not None:
                     text = chunk.choices[0].delta.content
                     full_reply += text
-                    yield json.dumps({"type": "chunk", "text": text}) + "\n"
+                    
+                    # Clean the text before sending to the browser
+                    cleaned_text = clean_text(text)
+                    yield json.dumps({"type": "chunk", "text": cleaned_text}) + "\n"
             
-            db.add(DBMessage(chat_id=chat_id, role="assistant", content=full_reply))
+            # Save the CLEANED full message to the database
+            final_cleaned = clean_text(full_reply)
+            db.add(DBMessage(chat_id=chat_id, role="assistant", content=final_cleaned))
             db.commit()
             
         except Exception as e:
