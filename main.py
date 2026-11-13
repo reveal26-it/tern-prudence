@@ -31,6 +31,7 @@ class DBChat(Base):
     session_id = Column(String, index=True)
     title = Column(String, default="New Conversation")
     is_shared = Column(Boolean, default=False)
+    summary = Column(Text, nullable=True) # NEW: Stores the consolidated memory
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 class DBMessage(Base):
@@ -83,21 +84,19 @@ class ChatRequest(BaseModel):
     file_data: str | None = None 
     file_type: str | None = None 
 
+class SleepRequest(BaseModel):
+    session_id: str
+    chat_id: str | None = None # NEW: Need chat_id to consolidate the right chat
+
 class ChatUpdate(BaseModel):
     title: str
 
-# --- HELPER FUNCTION TO STRIP MARKDOWN ---
 def clean_text(text):
-    # Remove bold and italics
     text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
     text = re.sub(r'\*(.*?)\*', r'\1', text)
-    # Remove headers
     text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE)
-    # Remove lists (dashes and stars at the start of lines)
     text = re.sub(r'^\s*[-*]\s*', '', text, flags=re.MULTILINE)
-    # Remove tables (pipes)
     text = text.replace('|', ' ')
-    # Remove horizontal rules
     text = re.sub(r'^---+$', '', text, flags=re.MULTILINE)
     return text
 
@@ -160,7 +159,13 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
 
     past_msgs = db.query(DBMessage).filter(DBMessage.chat_id == chat_id).order_by(DBMessage.timestamp).all()
     
-    system_prompt = PERSONAS.get(request.persona, PERSONAS["cocreator"])
+    # Get the consolidated summary if it exists
+    current_chat = db.query(DBChat).filter(DBChat.id == chat_id).first()
+    memory_context = ""
+    if current_chat and current_chat.summary:
+        memory_context = f"\n\n[CONSOLIDATED MEMORY FROM PREVIOUS SLEEP CYCLE]:\n{current_chat.summary}\n[END OF MEMORY]"
+
+    system_prompt = PERSONAS.get(request.persona, PERSONAS["cocreator"]) + memory_context
 
     context = [{"role": "system", "content": system_prompt}]
     
@@ -206,11 +211,9 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
                     text = chunk.choices[0].delta.content
                     full_reply += text
                     
-                    # Clean the text before sending to the browser
                     cleaned_text = clean_text(text)
                     yield json.dumps({"type": "chunk", "text": cleaned_text}) + "\n"
             
-            # Save the CLEANED full message to the database
             final_cleaned = clean_text(full_reply)
             db.add(DBMessage(chat_id=chat_id, role="assistant", content=final_cleaned))
             db.commit()
@@ -235,10 +238,47 @@ def delete_chat(chat_id: str, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "success"}
 
+# --- NEW: THE CONSOLIDATION SLEEP PROTOCOL ---
 @app.post("/api/sleep")
-async def sleep_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
+async def sleep_endpoint(request: SleepRequest, db: Session = Depends(get_db)):
+    # 1. Reset tiredness
     user = db.query(DBUser).filter(DBUser.session_id == request.session_id).first()
     if user:
         user.tiredness = 5
         db.commit()
+
+    # 2. Consolidate memory if there is an active chat
+    if request.chat_id:
+        chat = db.query(DBChat).filter(DBChat.id == request.chat_id).first()
+        if chat:
+            messages = db.query(DBMessage).filter(DBMessage.chat_id == request.chat_id).order_by(DBMessage.timestamp).all()
+            
+            if len(messages) > 4:
+                # Build a transcript for the AI to summarize
+                transcript = ""
+                for m in messages:
+                    transcript += f"{m.role}: {m.content[:500]}\n"
+                
+                # Ask the AI to summarize the chat
+                try:
+                    summary_prompt = f"Summarize the core facts, context, and current state of this conversation in 1-2 short paragraphs. This will be used as the AI's permanent memory.\n\n{transcript}"
+                    response = client.chat.completions.create(
+                        model="openai/gpt-oss-120b",
+                        messages=[{"role": "user", "content": summary_prompt}],
+                        max_tokens=500
+                    )
+                    summary_text = response.choices[0].message.content
+                    
+                    # Save the summary to the chat
+                    chat.summary = summary_text
+                    
+                    # Delete old messages to clear the context window (keep only the last 2)
+                    if len(messages) > 2:
+                        for m in messages[:-2]:
+                            db.delete(m)
+                    
+                    db.commit()
+                except Exception as e:
+                    print("Consolidation failed:", e)
+
     return {"status": "success"}
