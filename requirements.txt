@@ -5,3 +5,4 @@ pydantic
 sqlalchemy
 psycopg[binary]
 psycopg2-binary
+sentence-transformers
