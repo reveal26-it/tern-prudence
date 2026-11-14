@@ -84,7 +84,7 @@ class ChatRequest(BaseModel):
     persona: str = "cocreator"
     file_data: str | None = None 
     file_type: str | None = None 
-    emotion_mode: bool = False # NEW: Toggle emotion mode
+    emotion_mode: bool = False
 
 class SleepRequest(BaseModel):
     session_id: str
@@ -102,22 +102,37 @@ def clean_text(text):
     text = re.sub(r'^---+$', '', text, flags=re.MULTILINE)
     return text
 
-# --- NEW: EMOTION DETECTOR ---
+# --- EMOTION DETECTOR (triune-guarded) ---
 def detect_emotion(text):
+    """
+    Detect the SPEAKER's emotional state, not the content they discuss.
+    Guards against substring matches, quoted content, and negation.
+    """
     lower = text.lower()
-    
-    # Basic keyword matching for MVP
-    if any(w in lower for w in ['sad', 'depressed', 'cry', 'hurt', 'loss', 'sorry', 'grief']):
+
+    # Strip quoted content — it's discussed, not felt.
+    stripped = re.sub(r'"[^"]*"', '', lower)
+    stripped = re.sub(r"'[^']*'", '', stripped)
+
+    # Strip negated phrases ("not sad", "don't feel angry")
+    stripped = re.sub(r"\bnot\s+\w+", '', stripped)
+    stripped = re.sub(r"\bdon'?t\s+\w+", '', stripped)
+
+    def has_word(words):
+        # Word-boundary match prevents substring false positives
+        return any(re.search(rf'\b{w}\b', stripped) for w in words)
+
+    if has_word(['sad', 'depressed', 'crying', 'grief', 'lonely', 'hopeless']):
         return 'sad'
-    elif any(w in lower for w in ['angry', 'mad', 'furious', 'hate', 'stupid', 'annoying']):
+    if has_word(['angry', 'furious', 'hate', 'stupid', 'annoying', 'frustrated']):
         return 'angry'
-    elif any(w in lower for w in ['happy', 'great', 'awesome', 'love', 'excited', 'good', 'wonderful', 'joy']):
+    if has_word(['happy', 'great', 'awesome', 'love', 'excited', 'wonderful', 'joy']):
         return 'happy'
-    elif any(w in lower for w in ['wow', 'interesting', 'curious', 'wonder', 'what if', 'imagine']):
+    if has_word(['curious', 'wonder', 'fascinating', 'interesting']):
         return 'curious'
-    elif any(w in lower for w in ['help', 'support', 'struggle', 'hard', 'difficult']):
+    if has_word(['struggling', 'overwhelmed', 'need help']):
         return 'empathetic'
-    
+
     return 'neutral'
 
 @app.get("/")
