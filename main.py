@@ -101,58 +101,6 @@ def clean_text(text):
     text = re.sub(r'^---+$', '', text, flags=re.MULTILINE)
     return text
 
-# --- HELPER: SAVE MEMORY TO VECTOR DB ---
-def save_memory(db: Session, chat_id: str, content: str):
-    if not content.strip(): return
-    try:
-        # Use Groq to generate the vector
-        response = client.embeddings.create(
-            model="nomic-embed-text-v1.5",
-            input=content
-        )
-        embedding = response.data[0].embedding
-        
-        # Format the vector for Supabase
-        vector_str = '[' + ','.join(map(str, embedding)) + ']'
-        
-        db.execute(text("""
-            INSERT INTO memories (chat_id, content, embedding)
-            VALUES (:chat_id, :content, CAST(:embedding AS vector))
-        """), {"chat_id": chat_id, "content": content, "embedding": vector_str})
-        db.commit()
-    except Exception as e:
-        print("Failed to save memory:", e)
-
-# --- HELPER: RETRIEVE MEMORY ---
-def get_cross_chat_memory(db: Session, query: str, current_chat_id: str, limit: int = 3) -> str:
-    try:
-        # Use Groq to generate the vector for the query
-        response = client.embeddings.create(
-            model="nomic-embed-text-v1.5",
-            input=query
-        )
-        query_embedding = response.data[0].embedding
-        vector_str = '[' + ','.join(map(str, query_embedding)) + ']'
-        
-        results = db.execute(text("""
-            SELECT content FROM memories
-            WHERE chat_id != :current_chat_id
-            ORDER BY embedding <-> CAST(:query_embedding AS vector)
-            LIMIT :limit
-        """), {"current_chat_id": current_chat_id, "query_embedding": vector_str, "limit": limit}).fetchall()
-        
-        if not results:
-            return ""
-            
-        memory_context = "\n\n[PAST MEMORIES FROM OTHER CONVERSATIONS]:\n"
-        for row in results:
-            memory_context += f"- {row[0]}\n"
-        memory_context += "[END OF MEMORIES]\n\n"
-        return memory_context
-    except Exception as e:
-        print("Failed to retrieve memory:", e)
-        return ""
-
 @app.get("/")
 def serve_frontend():
     return FileResponse("index.html")
@@ -209,7 +157,6 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
 
     db.add(DBMessage(chat_id=chat_id, role="user", content=request.message))
     db.commit()
-    save_memory(db, chat_id, request.message)
 
     past_msgs = db.query(DBMessage).filter(DBMessage.chat_id == chat_id).order_by(DBMessage.timestamp).all()
     
@@ -221,9 +168,6 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     
     if current_chat and current_chat.lesson_learned:
         memory_context += f"\n\n[LESSON LEARNED FROM PREVIOUS SLEEP]:\n{current_chat.lesson_learned}\n[END OF LESSON]"
-
-    cross_memory = get_cross_chat_memory(db, request.message, chat_id)
-    memory_context += cross_memory
 
     system_prompt = PERSONAS.get(request.persona, PERSONAS["cocreator"]) + memory_context
 
@@ -258,6 +202,9 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
         try:
             yield json.dumps({"type": "meta", "chat_id": chat_id, "tiredness": user.tiredness}) + "\n"
             
+            # Simulate system 2 thinking states
+            yield json.dumps({"type": "status", "text": "Analyzing context..."}) + "\n"
+            
             response = client.chat.completions.create(
                 model=model_to_use,
                 messages=context,
@@ -265,6 +212,8 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
                 temperature=0.7,
                 stream=True
             )
+            
+            yield json.dumps({"type": "status", "text": "Generating response..."}) + "\n"
             
             for chunk in response:
                 if chunk.choices[0].delta.content is not None:
