@@ -106,6 +106,7 @@
             font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; cursor: pointer; transition: all 0.2s;
         }
         button.action-btn:hover { background: rgba(255, 255, 255, 0.1); }
+        button.action-btn.active { background: var(--teal-main); color: var(--bg-dark); }
         
         .chat-container {
             flex: 1; overflow-y: auto; padding: 24px;
@@ -113,10 +114,8 @@
             position: relative;
         }
 
-        /* --- WELCOME SCREEN --- */
         .welcome-screen {
-            position: absolute;
-            top: 0; left: 0; width: 100%; height: 100%;
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             display: flex; flex-direction: column; justify-content: center; align-items: center;
             background: transparent; z-index: 5; transition: opacity 0.5s ease;
         }
@@ -132,7 +131,6 @@
         .suggestion-card h3 { font-size: 1rem; margin-bottom: 8px; color: var(--teal-main); }
         .suggestion-card p { font-size: 0.85rem; color: #a0b0b0; line-height: 1.4; }
 
-        /* --- MESSAGES & THOUGHT PROCESS --- */
         .message {
             max-width: 80%; padding: 14px 18px; border-radius: 20px;
             line-height: 1.5; font-size: 0.95rem; animation: fadeIn 0.3s ease; white-space: pre-wrap;
@@ -142,21 +140,12 @@
         .message.user { align-self: flex-end; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-bottom-right-radius: 4px; }
         .message.prudence { align-self: flex-start; background: rgba(0, 0, 0, 0.2); border: 1px solid var(--teal-deep); border-bottom-left-radius: 4px; transition: border-color var(--transition-speed) ease; }
         
-        /* Thought Process Indicator */
         .thought-process {
-            display: none;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.75rem;
-            color: var(--teal-main);
-            margin-bottom: 8px;
-            font-style: italic;
-            animation: pulseText 1.5s infinite;
+            display: none; font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem; color: var(--teal-main); margin-bottom: 8px;
+            font-style: italic; animation: pulseText 1.5s infinite;
         }
-        @keyframes pulseText {
-            0% { opacity: 0.6; }
-            50% { opacity: 1; }
-            100% { opacity: 0.6; }
-        }
+        @keyframes pulseText { 0% { opacity: 0.6; } 50% { opacity: 1; } 100% { opacity: 0.6; } }
         
         pre { background: #000; padding: 12px; border-radius: 8px; overflow-x: auto; margin: 10px 0; border: 1px solid #333; position: relative; }
         code { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; }
@@ -241,6 +230,7 @@
                     <option value="tutor">Tutor</option>
                 </select>
 
+                <button class="action-btn" id="emotion-toggle" onclick="toggleEmotionMode()">🎭 Neutral</button>
                 <button class="action-btn" id="share-btn" onclick="shareChat()" style="display:none;">🔗 Share</button>
                 <button class="action-btn" id="export-btn" onclick="exportChat()" style="display:none;">📥 Export</button>
                 <button class="action-btn" id="speaker-toggle" onclick="toggleSpeaker()">🔊</button>
@@ -303,6 +293,7 @@
         let uploadedFileType = null; 
         let isGenerating = false;
         let abortController = null;
+        let emotionMode = false;
 
         const chatContainer = document.getElementById('chat-container');
         const userInput = document.getElementById('user-input');
@@ -312,6 +303,7 @@
         const sendBtn = document.getElementById('send-btn');
         const stopBtn = document.getElementById('stop-btn');
         const welcomeScreen = document.getElementById('welcome-screen');
+        const emotionToggle = document.getElementById('emotion-toggle');
 
         let isSpeakerOn = true;
         let isRecording = false;
@@ -338,6 +330,18 @@
         function stopRecording() { isRecording = false; micBtn.classList.remove('recording'); userInput.placeholder = "Ask or tell me something..."; }
         function toggleSpeaker() { isSpeakerOn = !isSpeakerOn; speakerToggle.textContent = isSpeakerOn ? "🔊" : "🔇"; if (!isSpeakerOn) synth.cancel(); }
         
+        function toggleEmotionMode() {
+            emotionMode = !emotionMode;
+            emotionToggle.classList.toggle('active', emotionMode);
+            if (emotionMode) {
+                emotionToggle.textContent = '🎭 Emotions';
+            } else {
+                emotionToggle.textContent = '🎭 Neutral';
+                // Revert to awake teal when turned off
+                setThemeColors('neutral', false);
+            }
+        }
+
         function speakText(text) {
             if (!isSpeakerOn) return;
             synth.cancel();
@@ -534,7 +538,7 @@
                     method: 'POST', headers: { 'Content-Type': 'application/json' }, 
                     body: JSON.stringify({ session_id: sessionId, chat_id: currentChatId }) 
                 });
-                updateStatus(5); 
+                updateStatus(5, 'neutral'); 
             } catch (error) { console.error(error); }
 
             if(window.innerWidth <= 768) document.getElementById('sidebar').classList.remove('open');
@@ -546,7 +550,6 @@
             const div = document.createElement('div');
             div.className = `message ${role}`;
             
-            // Add thought process indicator for Prudence
             if (role === 'prudence') {
                 const thoughtProcess = document.createElement('div');
                 thoughtProcess.className = 'thought-process';
@@ -624,7 +627,8 @@
                         message: displayMsg,
                         persona: personaSelect.value,
                         file_data: uploadedFileData,
-                        file_type: uploadedFileType
+                        file_type: uploadedFileType,
+                        emotion_mode: emotionMode // Send emotion mode toggle
                     })
                 });
 
@@ -650,15 +654,14 @@
                                     currentChatId = data.chat_id;
                                     loadChatList();
                                 }
-                                updateStatus(data.tiredness);
+                                updateStatus(data.tiredness, data.emotion);
                             } else if (data.type === 'status') {
-                                // Update the thought process text
                                 thoughtProcess.textContent = data.text;
                                 thoughtProcess.style.display = 'block';
                             } else if (data.type === 'chunk') {
                                 if (!hasStartedTyping) {
                                     hasStartedTyping = true;
-                                    thoughtProcess.style.display = 'none'; // Hide thought process
+                                    thoughtProcess.style.display = 'none';
                                 }
                                 fullReply += data.text;
                                 prudenceDiv.childNodes[prudenceDiv.childNodes.length - 1].textContent = fullReply;
@@ -702,33 +705,87 @@
                     method: 'POST', headers: { 'Content-Type': 'application/json' }, 
                     body: JSON.stringify({ session_id: sessionId, chat_id: currentChatId }) 
                 });
-                updateStatus(5); 
+                updateStatus(5, 'neutral'); 
                 addMessage("I feel refreshed. I've consolidated our conversation into my long-term memory. What's next?", "prudence");
             } catch (error) { console.error(error); }
         }
 
-        function updateStatus(tiredness) {
+        // --- COMBINED THEME LOGIC (Tiredness + Emotion) ---
+        function updateStatus(tiredness, emotion = 'neutral') {
             const dot = document.getElementById('status-dot');
             const text = document.getElementById('status-text');
             const root = document.documentElement;
 
-            if (tiredness < 60) {
-                root.style.setProperty('--teal-main', '#00d4aa');
-                root.style.setProperty('--teal-mid', '#00a88a');
-                root.style.setProperty('--teal-deep', '#007a66');
-                text.textContent = `Awake (${tiredness}%)`;
-            } 
-            else if (tiredness >= 60 && tiredness < 90) {
-                root.style.setProperty('--teal-main', '#f39c12');
-                root.style.setProperty('--teal-mid', '#d68910');
-                root.style.setProperty('--teal-deep', '#a04000');
-                text.textContent = `Tired (${tiredness}%)`;
-            } 
-            else {
-                root.style.setProperty('--teal-main', '#ff4444');
-                root.style.setProperty('--teal-mid', '#cc0000');
-                root.style.setProperty('--teal-deep', '#660000');
-                text.textContent = `Exhausted (${tiredness}%)`;
+            if (emotionMode && emotion !== 'neutral') {
+                // Emotion Mode Overrides Tiredness
+                text.textContent = `Emotion: ${emotion}`;
+                setThemeColors(emotion, true);
+            } else {
+                // Standard Tiredness Mode
+                if (tiredness < 60) {
+                    text.textContent = `Awake (${tiredness}%)`;
+                    setThemeColors('awake', false);
+                } 
+                else if (tiredness >= 60 && tiredness < 90) {
+                    text.textContent = `Tired (${tiredness}%)`;
+                    setThemeColors('tired', false);
+                } 
+                else {
+                    text.textContent = `Exhausted (${tiredness}%)`;
+                    setThemeColors('exhausted', false);
+                }
+            }
+        }
+
+        function setThemeColors(state, isEmotion) {
+            const root = document.documentElement;
+            
+            if (isEmotion) {
+                switch(state) {
+                    case 'happy':
+                        root.style.setProperty('--teal-main', '#ffd700');
+                        root.style.setProperty('--teal-mid', '#daa520');
+                        root.style.setProperty('--teal-deep', '#b8860b');
+                        break;
+                    case 'sad':
+                        root.style.setProperty('--teal-main', '#4a90e2');
+                        root.style.setProperty('--teal-mid', '#357abd');
+                        root.style.setProperty('--teal-deep', '#1c5a8a');
+                        break;
+                    case 'angry':
+                        root.style.setProperty('--teal-main', '#ff4444');
+                        root.style.setProperty('--teal-mid', '#cc0000');
+                        root.style.setProperty('--teal-deep', '#800000');
+                        break;
+                    case 'curious':
+                        root.style.setProperty('--teal-main', '#9b59b6');
+                        root.style.setProperty('--teal-mid', '#8e44ad');
+                        root.style.setProperty('--teal-deep', '#6c3483');
+                        break;
+                    case 'empathetic':
+                        root.style.setProperty('--teal-main', '#ff69b4');
+                        root.style.setProperty('--teal-mid', '#db7093');
+                        root.style.setProperty('--teal-deep', '#c71585');
+                        break;
+                }
+            } else {
+                switch(state) {
+                    case 'awake':
+                        root.style.setProperty('--teal-main', '#00d4aa');
+                        root.style.setProperty('--teal-mid', '#00a88a');
+                        root.style.setProperty('--teal-deep', '#007a66');
+                        break;
+                    case 'tired':
+                        root.style.setProperty('--teal-main', '#f39c12');
+                        root.style.setProperty('--teal-mid', '#d68910');
+                        root.style.setProperty('--teal-deep', '#a04000');
+                        break;
+                    case 'exhausted':
+                        root.style.setProperty('--teal-main', '#ff4444');
+                        root.style.setProperty('--teal-mid', '#cc0000');
+                        root.style.setProperty('--teal-deep', '#660000');
+                        break;
+                }
             }
         }
     </script>
