@@ -110,7 +110,70 @@
         .chat-container {
             flex: 1; overflow-y: auto; padding: 24px;
             display: flex; flex-direction: column; gap: 16px; scroll-behavior: smooth;
+            position: relative;
         }
+
+        /* --- NEW WELCOME SCREEN --- */
+        .welcome-screen {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: transparent;
+            z-index: 5;
+            transition: opacity 0.5s ease;
+        }
+        .welcome-screen.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        .welcome-title {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 2.5rem;
+            font-weight: 600;
+            margin-bottom: 10px;
+            text-align: center;
+            color: var(--text-light);
+        }
+        .welcome-subtitle {
+            font-size: 1.1rem;
+            color: #a0b0b0;
+            margin-bottom: 40px;
+            text-align: center;
+        }
+        .suggestion-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            max-width: 700px;
+            width: 100%;
+        }
+        .suggestion-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .suggestion-card:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: var(--teal-main);
+            transform: translateY(-2px);
+        }
+        .suggestion-card h3 {
+            font-size: 1rem;
+            margin-bottom: 8px;
+            color: var(--teal-main);
+        }
+        .suggestion-card p {
+            font-size: 0.85rem;
+            color: #a0b0b0;
+            line-height: 1.4;
+        }
+
         .message {
             max-width: 80%; padding: 14px 18px; border-radius: 20px;
             line-height: 1.5; font-size: 0.95rem; animation: fadeIn 0.3s ease; white-space: pre-wrap;
@@ -132,6 +195,7 @@
             padding: 20px 24px; background: rgba(0, 0, 0, 0.3);
             border-top: 1px solid rgba(255, 255, 255, 0.05); display: flex; gap: 12px; align-items: center;
             transition: border-color var(--transition-speed) ease;
+            z-index: 10;
         }
         .icon-btn { cursor: pointer; font-size: 1.2rem; color: #a0b0b0; transition: color 0.2s; padding: 0 4px; background: none; border: none; }
         .icon-btn:hover { color: var(--teal-main); }
@@ -168,6 +232,7 @@
             .sidebar { position: absolute; height: 100%; z-index: 20; transform: translateX(-100%); }
             .sidebar.open { transform: translateX(0); }
             .status-badge { display: none; }
+            .suggestion-grid { grid-template-columns: 1fr; }
         }
     </style>
 </head>
@@ -209,7 +274,31 @@
             </div>
         </header>
 
-        <div class="chat-container" id="chat-container"></div>
+        <div class="chat-container" id="chat-container">
+            <!-- WELCOME SCREEN -->
+            <div class="welcome-screen" id="welcome-screen">
+                <h1 class="welcome-title">What are we building today?</h1>
+                <p class="welcome-subtitle">I'm Prudence, your triune co-creator. Choose a starting point or just start typing.</p>
+                <div class="suggestion-grid">
+                    <div class="suggestion-card" onclick="useSuggestion('Help me write a Python script that ');">
+                        <h3>💻 Write Code</h3>
+                        <p>Build a script, debug an error, or design a new architecture.</p>
+                    </div>
+                    <div class="suggestion-card" onclick="useSuggestion('Analyze this document for me: ');">
+                        <h3>📄 Analyze Data</h3>
+                        <p>Upload a PDF or image and let me extract the key insights.</p>
+                    </div>
+                    <div class="suggestion-card" onclick="useSuggestion('Brainstorm ideas for ');">
+                        <h3>🧠 Brainstorm</h3>
+                        <p>Generate creative concepts, outlines, or strategies for your project.</p>
+                    </div>
+                    <div class="suggestion-card" onclick="useSuggestion('Explain the concept of ');">
+                        <h3>📚 Learn</h3>
+                        <p>Ask me to tutor you on a complex topic step-by-step.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
 
         <div class="input-area" id="input-area">
             <label class="icon-btn" for="file-upload">📎</label>
@@ -249,6 +338,7 @@
         const personaSelect = document.getElementById('persona-select');
         const sendBtn = document.getElementById('send-btn');
         const stopBtn = document.getElementById('stop-btn');
+        const welcomeScreen = document.getElementById('welcome-screen');
 
         let isSpeakerOn = true;
         let isRecording = false;
@@ -275,48 +365,20 @@
         function stopRecording() { isRecording = false; micBtn.classList.remove('recording'); userInput.placeholder = "Ask or tell me something..."; }
         function toggleSpeaker() { isSpeakerOn = !isSpeakerOn; speakerToggle.textContent = isSpeakerOn ? "🔊" : "🔇"; if (!isSpeakerOn) synth.cancel(); }
         
-        // --- UPGRADED NATURAL VOICE LOGIC ---
         function speakText(text) {
             if (!isSpeakerOn) return;
             synth.cancel();
-            
             const utterance = new SpeechSynthesisUtterance(text);
             const voices = synth.getVoices();
-            
-            // Priority list for the most natural, human-sounding voices available on OS
-            const preferredVoices = [
-                'Google US English',           // Chrome on Windows/Mac (Very natural)
-                'Samantha',                    // Mac / iOS (Very natural)
-                'Microsoft Aria Online',       // Edge on Windows (Neural)
-                'Microsoft Jenny Online',      // Edge on Windows (Neural)
-                'Google UK English Female',    // Chrome
-                'Karen',                       // Mac / iOS
-                'Moira'                        // Mac / iOS
-            ];
-
+            const preferredVoices = ['Google US English', 'Samantha', 'Microsoft Aria Online', 'Microsoft Jenny Online', 'Google UK English Female'];
             let selectedVoice = null;
             for (let name of preferredVoices) {
                 selectedVoice = voices.find(v => v.name.includes(name));
                 if (selectedVoice) break;
             }
-            
-            // Fallback to any English female voice if the preferred ones aren't found
-            if (!selectedVoice) {
-                selectedVoice = voices.find(v => v.lang.startsWith('en') && v.name.includes('Female'));
-            }
-            if (!selectedVoice) {
-                selectedVoice = voices.find(v => v.lang.startsWith('en'));
-            }
-
-            if (selectedVoice) {
-                utterance.voice = selectedVoice;
-            }
-
-            // Adjust pitch and rate to sound more human
+            if (!selectedVoice) selectedVoice = voices.find(v => v.lang.startsWith('en'));
+            if (selectedVoice) utterance.voice = selectedVoice;
             utterance.rate = 1.05; 
-            utterance.pitch = 1.0;
-            utterance.volume = 1.0;
-            
             synth.speak(utterance);
         }
 
@@ -327,12 +389,25 @@
                 document.getElementById('share-btn').style.display = 'inline-block';
                 document.getElementById('export-btn').style.display = 'inline-block';
                 loadChatList();
-                if (!currentChatId) chatContainer.innerHTML = '<div class="message prudence">Hey there! I\'m Prudence. What persona do you need today?</div>';
             }
             if (speechSynthesis.onvoiceschanged !== undefined) synth.onvoiceschanged = () => synth.getVoices();
         };
 
+        // --- WELCOME SCREEN LOGIC ---
+        function hideWelcomeScreen() {
+            if (!welcomeScreen.classList.contains('hidden')) {
+                welcomeScreen.classList.add('hidden');
+            }
+        }
+
+        function useSuggestion(text) {
+            userInput.value = text;
+            userInput.focus();
+            hideWelcomeScreen();
+        }
+
         async function loadSharedChat(chatId) {
+            hideWelcomeScreen();
             document.getElementById('sidebar').style.display = 'none';
             document.getElementById('input-area').style.display = 'none';
             document.getElementById('header-controls').innerHTML = '<div class="status-badge" style="color:var(--teal-main);">Read-Only Shared Chat</div>';
@@ -378,6 +453,7 @@
         async function handleFileUpload(event) {
             const file = event.target.files[0];
             if (!file) return;
+            hideWelcomeScreen();
             filePreview.style.display = 'inline-block';
             filePreview.textContent = `Reading ${file.name}...`;
             uploadedFileData = null; uploadedFileType = null;
@@ -450,6 +526,7 @@
         document.addEventListener('click', () => { document.querySelectorAll('.dropdown').forEach(d => d.classList.remove('show')); });
 
         async function loadChat(chatId) {
+            hideWelcomeScreen();
             currentChatId = chatId;
             chatContainer.innerHTML = ''; 
             try {
@@ -477,7 +554,8 @@
         async function startNewChat() {
             currentChatId = null; uploadedFileData = null; uploadedFileType = null;
             filePreview.style.display = 'none'; document.getElementById('file-upload').value = '';
-            chatContainer.innerHTML = '<div class="message prudence">Hey there! I\'m Prudence. What are we building today?</div>';
+            chatContainer.innerHTML = ''; 
+            welcomeScreen.classList.remove('hidden'); // Show welcome screen again
             
             try {
                 await fetch('/api/sleep', { 
@@ -538,6 +616,7 @@
         }
 
         async function sendMessage() {
+            hideWelcomeScreen(); // Hide welcome screen on first message
             const text = userInput.value.trim();
             if ((!text && !uploadedFileData) || isGenerating) return;
 
