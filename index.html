@@ -113,67 +113,26 @@
             position: relative;
         }
 
-        /* --- NEW WELCOME SCREEN --- */
+        /* --- WELCOME SCREEN --- */
         .welcome-screen {
             position: absolute;
             top: 0; left: 0; width: 100%; height: 100%;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            background: transparent;
-            z-index: 5;
-            transition: opacity 0.5s ease;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            background: transparent; z-index: 5; transition: opacity 0.5s ease;
         }
-        .welcome-screen.hidden {
-            opacity: 0;
-            pointer-events: none;
-        }
-        .welcome-title {
-            font-family: 'Space Grotesk', sans-serif;
-            font-size: 2.5rem;
-            font-weight: 600;
-            margin-bottom: 10px;
-            text-align: center;
-            color: var(--text-light);
-        }
-        .welcome-subtitle {
-            font-size: 1.1rem;
-            color: #a0b0b0;
-            margin-bottom: 40px;
-            text-align: center;
-        }
-        .suggestion-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 16px;
-            max-width: 700px;
-            width: 100%;
-        }
+        .welcome-screen.hidden { opacity: 0; pointer-events: none; }
+        .welcome-title { font-family: 'Space Grotesk', sans-serif; font-size: 2.5rem; font-weight: 600; margin-bottom: 10px; text-align: center; }
+        .welcome-subtitle { font-size: 1.1rem; color: #a0b0b0; margin-bottom: 40px; text-align: center; }
+        .suggestion-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; max-width: 700px; width: 100%; }
         .suggestion-card {
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 12px;
-            padding: 20px;
-            cursor: pointer;
-            transition: all 0.3s ease;
+            background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px; padding: 20px; cursor: pointer; transition: all 0.3s ease;
         }
-        .suggestion-card:hover {
-            background: rgba(255, 255, 255, 0.08);
-            border-color: var(--teal-main);
-            transform: translateY(-2px);
-        }
-        .suggestion-card h3 {
-            font-size: 1rem;
-            margin-bottom: 8px;
-            color: var(--teal-main);
-        }
-        .suggestion-card p {
-            font-size: 0.85rem;
-            color: #a0b0b0;
-            line-height: 1.4;
-        }
+        .suggestion-card:hover { background: rgba(255, 255, 255, 0.08); border-color: var(--teal-main); transform: translateY(-2px); }
+        .suggestion-card h3 { font-size: 1rem; margin-bottom: 8px; color: var(--teal-main); }
+        .suggestion-card p { font-size: 0.85rem; color: #a0b0b0; line-height: 1.4; }
 
+        /* --- MESSAGES & THOUGHT PROCESS --- */
         .message {
             max-width: 80%; padding: 14px 18px; border-radius: 20px;
             line-height: 1.5; font-size: 0.95rem; animation: fadeIn 0.3s ease; white-space: pre-wrap;
@@ -182,6 +141,22 @@
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .message.user { align-self: flex-end; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-bottom-right-radius: 4px; }
         .message.prudence { align-self: flex-start; background: rgba(0, 0, 0, 0.2); border: 1px solid var(--teal-deep); border-bottom-left-radius: 4px; transition: border-color var(--transition-speed) ease; }
+        
+        /* Thought Process Indicator */
+        .thought-process {
+            display: none;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--teal-main);
+            margin-bottom: 8px;
+            font-style: italic;
+            animation: pulseText 1.5s infinite;
+        }
+        @keyframes pulseText {
+            0% { opacity: 0.6; }
+            50% { opacity: 1; }
+            100% { opacity: 0.6; }
+        }
         
         pre { background: #000; padding: 12px; border-radius: 8px; overflow-x: auto; margin: 10px 0; border: 1px solid #333; position: relative; }
         code { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; }
@@ -194,8 +169,7 @@
         .input-area {
             padding: 20px 24px; background: rgba(0, 0, 0, 0.3);
             border-top: 1px solid rgba(255, 255, 255, 0.05); display: flex; gap: 12px; align-items: center;
-            transition: border-color var(--transition-speed) ease;
-            z-index: 10;
+            transition: border-color var(--transition-speed) ease; z-index: 10;
         }
         .icon-btn { cursor: pointer; font-size: 1.2rem; color: #a0b0b0; transition: color 0.2s; padding: 0 4px; background: none; border: none; }
         .icon-btn:hover { color: var(--teal-main); }
@@ -275,7 +249,6 @@
         </header>
 
         <div class="chat-container" id="chat-container">
-            <!-- WELCOME SCREEN -->
             <div class="welcome-screen" id="welcome-screen">
                 <h1 class="welcome-title">What are we building today?</h1>
                 <p class="welcome-subtitle">I'm Prudence, your triune co-creator. Choose a starting point or just start typing.</p>
@@ -393,7 +366,6 @@
             if (speechSynthesis.onvoiceschanged !== undefined) synth.onvoiceschanged = () => synth.getVoices();
         };
 
-        // --- WELCOME SCREEN LOGIC ---
         function hideWelcomeScreen() {
             if (!welcomeScreen.classList.contains('hidden')) {
                 welcomeScreen.classList.add('hidden');
@@ -555,7 +527,7 @@
             currentChatId = null; uploadedFileData = null; uploadedFileType = null;
             filePreview.style.display = 'none'; document.getElementById('file-upload').value = '';
             chatContainer.innerHTML = ''; 
-            welcomeScreen.classList.remove('hidden'); // Show welcome screen again
+            welcomeScreen.classList.remove('hidden');
             
             try {
                 await fetch('/api/sleep', { 
@@ -573,6 +545,14 @@
         function addMessage(text, role) {
             const div = document.createElement('div');
             div.className = `message ${role}`;
+            
+            // Add thought process indicator for Prudence
+            if (role === 'prudence') {
+                const thoughtProcess = document.createElement('div');
+                thoughtProcess.className = 'thought-process';
+                thoughtProcess.textContent = 'Analyzing context...';
+                div.appendChild(thoughtProcess);
+            }
             
             if (text.includes("```")) {
                 const parts = text.split("```");
@@ -598,7 +578,7 @@
                     }
                 });
             } else {
-                div.textContent = text;
+                div.appendChild(document.createTextNode(text));
             }
 
             chatContainer.appendChild(div);
@@ -616,7 +596,7 @@
         }
 
         async function sendMessage() {
-            hideWelcomeScreen(); // Hide welcome screen on first message
+            hideWelcomeScreen();
             const text = userInput.value.trim();
             if ((!text && !uploadedFileData) || isGenerating) return;
 
@@ -624,7 +604,8 @@
             addMessage(displayMsg, 'user');
             userInput.value = '';
 
-            const prudenceDiv = addMessage('...', 'prudence');
+            const prudenceDiv = addMessage('', 'prudence');
+            const thoughtProcess = prudenceDiv.querySelector('.thought-process');
             let fullReply = '';
 
             abortController = new AbortController();
@@ -650,6 +631,7 @@
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder("utf-8");
                 let buffer = '';
+                let hasStartedTyping = false;
 
                 while (true) {
                     const { done, value } = await reader.read();
@@ -669,11 +651,20 @@
                                     loadChatList();
                                 }
                                 updateStatus(data.tiredness);
+                            } else if (data.type === 'status') {
+                                // Update the thought process text
+                                thoughtProcess.textContent = data.text;
+                                thoughtProcess.style.display = 'block';
                             } else if (data.type === 'chunk') {
+                                if (!hasStartedTyping) {
+                                    hasStartedTyping = true;
+                                    thoughtProcess.style.display = 'none'; // Hide thought process
+                                }
                                 fullReply += data.text;
-                                prudenceDiv.textContent = fullReply;
+                                prudenceDiv.childNodes[prudenceDiv.childNodes.length - 1].textContent = fullReply;
                                 chatContainer.scrollTop = chatContainer.scrollHeight;
                             } else if (data.type === 'error') {
+                                thoughtProcess.style.display = 'none';
                                 prudenceDiv.textContent = "Error: " + data.text;
                             }
                         } catch(e) {}
