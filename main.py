@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from groq import Groq
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean, text
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from sentence_transformers import SentenceTransformer
 import os
@@ -44,22 +44,7 @@ class DBMessage(Base):
     content = Column(Text)
     timestamp = Column(DateTime, default=datetime.datetime.utcnow)
 
-# We create the tables via SQLAlchemy for the standard stuff
 Base.metadata.create_all(bind=engine)
-
-# We use raw SQL for the memories table because of the pgvector type
-from sqlalchemy import text
-with engine.connect() as conn:
-    conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
-    conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS memories (
-            id bigserial primary key,
-            chat_id text,
-            content text,
-            embedding vector(384)
-        );
-    """))
-    conn.commit()
 
 def get_db():
     db = SessionLocal()
@@ -71,7 +56,6 @@ def get_db():
 # ============================================
 # 2. EMBEDDING MODEL & API SETUP
 # ============================================
-# Load a fast, local embedding model
 embedder = SentenceTransformer('all-MiniLM-L6-v2')
 
 app = FastAPI()
@@ -123,29 +107,28 @@ def clean_text(text):
 # --- HELPER: SAVE MEMORY TO VECTOR DB ---
 def save_memory(db: Session, chat_id: str, content: str):
     if not content.strip(): return
-    # Convert text to vector
     embedding = embedder.encode(content).tolist()
     
-    # Insert into Supabase
+    # Format the vector properly for pgvector (e.g., '[0.1, 0.2, 0.3]')
+    vector_str = '[' + ','.join(map(str, embedding)) + ']'
+    
     db.execute(text("""
         INSERT INTO memories (chat_id, content, embedding)
-        VALUES (:chat_id, :content, :embedding)
-    """), {"chat_id": chat_id, "content": content, "embedding": str(embedding)})
+        VALUES (:chat_id, :content, CAST(:embedding AS vector))
+    """), {"chat_id": chat_id, "content": content, "embedding": vector_str})
     db.commit()
 
 # --- HELPER: RETRIEVE MEMORY ---
 def get_cross_chat_memory(db: Session, query: str, current_chat_id: str, limit: int = 3) -> str:
-    # Convert query to vector
     query_embedding = embedder.encode(query).tolist()
+    vector_str = '[' + ','.join(map(str, query_embedding)) + ']'
     
-    # Search Supabase for closest matches
-    # We use the <-> operator for cosine distance
     results = db.execute(text("""
-        SELECT content, chat_id FROM memories
+        SELECT content FROM memories
         WHERE chat_id != :current_chat_id
-        ORDER BY embedding <-> :query_embedding
+        ORDER BY embedding <-> CAST(:query_embedding AS vector)
         LIMIT :limit
-    """), {"current_chat_id": current_chat_id, "query_embedding": str(query_embedding), "limit": limit}).fetchall()
+    """), {"current_chat_id": current_chat_id, "query_embedding": vector_str, "limit": limit}).fetchall()
     
     if not results:
         return ""
@@ -210,7 +193,6 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
         db.add(new_chat)
         db.commit()
 
-    # Save to active chat and to Vector Memory
     db.add(DBMessage(chat_id=chat_id, role="user", content=request.message))
     db.commit()
     save_memory(db, chat_id, request.message)
@@ -220,15 +202,12 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     current_chat = db.query(DBChat).filter(DBChat.id == chat_id).first()
     memory_context = ""
     
-    # 1. Add current chat summary
     if current_chat and current_chat.summary:
         memory_context += f"\n\n[CONSOLIDATED MEMORY]:\n{current_chat.summary}\n[END OF MEMORY]"
     
-    # 2. Add self-reflection
     if current_chat and current_chat.lesson_learned:
         memory_context += f"\n\n[LESSON LEARNED FROM PREVIOUS SLEEP]:\n{current_chat.lesson_learned}\n[END OF LESSON]"
 
-    # 3. Add cross-chat semantic memory
     cross_memory = get_cross_chat_memory(db, request.message, chat_id)
     memory_context += cross_memory
 
