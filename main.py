@@ -4,7 +4,6 @@ from pydantic import BaseModel
 from groq import Groq
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean, text
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
-from sentence_transformers import SentenceTransformer
 import os
 import datetime
 import uuid
@@ -54,10 +53,8 @@ def get_db():
         db.close()
 
 # ============================================
-# 2. EMBEDDING MODEL & API SETUP
+# 2. API SETUP
 # ============================================
-embedder = SentenceTransformer('all-MiniLM-L6-v2')
-
 app = FastAPI()
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
@@ -107,37 +104,54 @@ def clean_text(text):
 # --- HELPER: SAVE MEMORY TO VECTOR DB ---
 def save_memory(db: Session, chat_id: str, content: str):
     if not content.strip(): return
-    embedding = embedder.encode(content).tolist()
-    
-    # Format the vector properly for pgvector (e.g., '[0.1, 0.2, 0.3]')
-    vector_str = '[' + ','.join(map(str, embedding)) + ']'
-    
-    db.execute(text("""
-        INSERT INTO memories (chat_id, content, embedding)
-        VALUES (:chat_id, :content, CAST(:embedding AS vector))
-    """), {"chat_id": chat_id, "content": content, "embedding": vector_str})
-    db.commit()
+    try:
+        # Use Groq to generate the vector
+        response = client.embeddings.create(
+            model="nomic-embed-text-v1.5",
+            input=content
+        )
+        embedding = response.data[0].embedding
+        
+        # Format the vector for Supabase
+        vector_str = '[' + ','.join(map(str, embedding)) + ']'
+        
+        db.execute(text("""
+            INSERT INTO memories (chat_id, content, embedding)
+            VALUES (:chat_id, :content, CAST(:embedding AS vector))
+        """), {"chat_id": chat_id, "content": content, "embedding": vector_str})
+        db.commit()
+    except Exception as e:
+        print("Failed to save memory:", e)
 
 # --- HELPER: RETRIEVE MEMORY ---
 def get_cross_chat_memory(db: Session, query: str, current_chat_id: str, limit: int = 3) -> str:
-    query_embedding = embedder.encode(query).tolist()
-    vector_str = '[' + ','.join(map(str, query_embedding)) + ']'
-    
-    results = db.execute(text("""
-        SELECT content FROM memories
-        WHERE chat_id != :current_chat_id
-        ORDER BY embedding <-> CAST(:query_embedding AS vector)
-        LIMIT :limit
-    """), {"current_chat_id": current_chat_id, "query_embedding": vector_str, "limit": limit}).fetchall()
-    
-    if not results:
-        return ""
+    try:
+        # Use Groq to generate the vector for the query
+        response = client.embeddings.create(
+            model="nomic-embed-text-v1.5",
+            input=query
+        )
+        query_embedding = response.data[0].embedding
+        vector_str = '[' + ','.join(map(str, query_embedding)) + ']'
         
-    memory_context = "\n\n[PAST MEMORIES FROM OTHER CONVERSATIONS]:\n"
-    for row in results:
-        memory_context += f"- {row[0]}\n"
-    memory_context += "[END OF MEMORIES]\n\n"
-    return memory_context
+        results = db.execute(text("""
+            SELECT content FROM memories
+            WHERE chat_id != :current_chat_id
+            ORDER BY embedding <-> CAST(:query_embedding AS vector)
+            LIMIT :limit
+        """), {"current_chat_id": current_chat_id, "query_embedding": vector_str, "limit": limit}).fetchall()
+        
+        if not results:
+            return ""
+            
+        memory_context = "\n\n[PAST MEMORIES FROM OTHER CONVERSATIONS]:\n"
+        for row in results:
+            memory_context += f"- {row[0]}\n"
+        memory_context += "[END OF MEMORIES]\n\n"
+        return memory_context
+    except Exception as e:
+        print("Failed to retrieve memory:", e)
+        return ""
 
 @app.get("/")
 def serve_frontend():
@@ -254,9 +268,9 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
             
             for chunk in response:
                 if chunk.choices[0].delta.content is not None:
-                    text = chunk.choices[0].delta.content
-                    full_reply += text
-                    yield json.dumps({"type": "chunk", "text": clean_text(text)}) + "\n"
+                    text_chunk = chunk.choices[0].delta.content
+                    full_reply += text_chunk
+                    yield json.dumps({"type": "chunk", "text": clean_text(text_chunk)}) + "\n"
             
             final_cleaned = clean_text(full_reply)
             db.add(DBMessage(chat_id=chat_id, role="assistant", content=final_cleaned))
