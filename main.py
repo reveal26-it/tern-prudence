@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from groq import Groq
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
+from sentence_transformers import SentenceTransformer
 import os
 import datetime
 import uuid
@@ -32,7 +33,7 @@ class DBChat(Base):
     title = Column(String, default="New Conversation")
     is_shared = Column(Boolean, default=False)
     summary = Column(Text, nullable=True)
-    lesson_learned = Column(Text, nullable=True) # NEW: Stores the self-reflection
+    lesson_learned = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 class DBMessage(Base):
@@ -43,7 +44,22 @@ class DBMessage(Base):
     content = Column(Text)
     timestamp = Column(DateTime, default=datetime.datetime.utcnow)
 
+# We create the tables via SQLAlchemy for the standard stuff
 Base.metadata.create_all(bind=engine)
+
+# We use raw SQL for the memories table because of the pgvector type
+from sqlalchemy import text
+with engine.connect() as conn:
+    conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS memories (
+            id bigserial primary key,
+            chat_id text,
+            content text,
+            embedding vector(384)
+        );
+    """))
+    conn.commit()
 
 def get_db():
     db = SessionLocal()
@@ -53,8 +69,11 @@ def get_db():
         db.close()
 
 # ============================================
-# 2. API SETUP
+# 2. EMBEDDING MODEL & API SETUP
 # ============================================
+# Load a fast, local embedding model
+embedder = SentenceTransformer('all-MiniLM-L6-v2')
+
 app = FastAPI()
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
@@ -100,6 +119,42 @@ def clean_text(text):
     text = text.replace('|', ' ')
     text = re.sub(r'^---+$', '', text, flags=re.MULTILINE)
     return text
+
+# --- HELPER: SAVE MEMORY TO VECTOR DB ---
+def save_memory(db: Session, chat_id: str, content: str):
+    if not content.strip(): return
+    # Convert text to vector
+    embedding = embedder.encode(content).tolist()
+    
+    # Insert into Supabase
+    db.execute(text("""
+        INSERT INTO memories (chat_id, content, embedding)
+        VALUES (:chat_id, :content, :embedding)
+    """), {"chat_id": chat_id, "content": content, "embedding": str(embedding)})
+    db.commit()
+
+# --- HELPER: RETRIEVE MEMORY ---
+def get_cross_chat_memory(db: Session, query: str, current_chat_id: str, limit: int = 3) -> str:
+    # Convert query to vector
+    query_embedding = embedder.encode(query).tolist()
+    
+    # Search Supabase for closest matches
+    # We use the <-> operator for cosine distance
+    results = db.execute(text("""
+        SELECT content, chat_id FROM memories
+        WHERE chat_id != :current_chat_id
+        ORDER BY embedding <-> :query_embedding
+        LIMIT :limit
+    """), {"current_chat_id": current_chat_id, "query_embedding": str(query_embedding), "limit": limit}).fetchall()
+    
+    if not results:
+        return ""
+        
+    memory_context = "\n\n[PAST MEMORIES FROM OTHER CONVERSATIONS]:\n"
+    for row in results:
+        memory_context += f"- {row[0]}\n"
+    memory_context += "[END OF MEMORIES]\n\n"
+    return memory_context
 
 @app.get("/")
 def serve_frontend():
@@ -155,17 +210,27 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
         db.add(new_chat)
         db.commit()
 
+    # Save to active chat and to Vector Memory
     db.add(DBMessage(chat_id=chat_id, role="user", content=request.message))
     db.commit()
+    save_memory(db, chat_id, request.message)
 
     past_msgs = db.query(DBMessage).filter(DBMessage.chat_id == chat_id).order_by(DBMessage.timestamp).all()
     
     current_chat = db.query(DBChat).filter(DBChat.id == chat_id).first()
     memory_context = ""
+    
+    # 1. Add current chat summary
     if current_chat and current_chat.summary:
         memory_context += f"\n\n[CONSOLIDATED MEMORY]:\n{current_chat.summary}\n[END OF MEMORY]"
+    
+    # 2. Add self-reflection
     if current_chat and current_chat.lesson_learned:
         memory_context += f"\n\n[LESSON LEARNED FROM PREVIOUS SLEEP]:\n{current_chat.lesson_learned}\n[END OF LESSON]"
+
+    # 3. Add cross-chat semantic memory
+    cross_memory = get_cross_chat_memory(db, request.message, chat_id)
+    memory_context += cross_memory
 
     system_prompt = PERSONAS.get(request.persona, PERSONAS["cocreator"]) + memory_context
 
@@ -212,9 +277,7 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
                 if chunk.choices[0].delta.content is not None:
                     text = chunk.choices[0].delta.content
                     full_reply += text
-                    
-                    cleaned_text = clean_text(text)
-                    yield json.dumps({"type": "chunk", "text": cleaned_text}) + "\n"
+                    yield json.dumps({"type": "chunk", "text": clean_text(text)}) + "\n"
             
             final_cleaned = clean_text(full_reply)
             db.add(DBMessage(chat_id=chat_id, role="assistant", content=final_cleaned))
@@ -240,7 +303,6 @@ def delete_chat(chat_id: str, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "success"}
 
-# --- THE SLEEP & DREAM PROTOCOL ---
 @app.post("/api/sleep")
 async def sleep_endpoint(request: SleepRequest, db: Session = Depends(get_db)):
     user = db.query(DBUser).filter(DBUser.session_id == request.session_id).first()
@@ -259,7 +321,6 @@ async def sleep_endpoint(request: SleepRequest, db: Session = Depends(get_db)):
                     transcript += f"{m.role}: {m.content[:500]}\n"
                 
                 try:
-                    # 1. CONSOLIDATION: Summarize facts
                     summary_prompt = f"Summarize the core facts and current state of this conversation in 1 short paragraph.\n\n{transcript}"
                     res1 = client.chat.completions.create(
                         model="openai/gpt-oss-120b",
@@ -268,7 +329,6 @@ async def sleep_endpoint(request: SleepRequest, db: Session = Depends(get_db)):
                     )
                     chat.summary = res1.choices[0].message.content
 
-                    # 2. DREAM PROTOCOL: Self-Reflection
                     dream_prompt = f"You are analyzing your own performance in this conversation. How could you have been more helpful, empathetic, or clear? Write 1 short sentence of advice for your future self.\n\n{transcript}"
                     res2 = client.chat.completions.create(
                         model="openai/gpt-oss-120b",
@@ -277,7 +337,6 @@ async def sleep_endpoint(request: SleepRequest, db: Session = Depends(get_db)):
                     )
                     chat.lesson_learned = res2.choices[0].message.content
                     
-                    # Prune old messages
                     if len(messages) > 2:
                         for m in messages[:-2]:
                             db.delete(m)
