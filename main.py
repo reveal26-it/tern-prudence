@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from groq import Groq
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean, text
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 import os
 import datetime
@@ -84,6 +84,7 @@ class ChatRequest(BaseModel):
     persona: str = "cocreator"
     file_data: str | None = None 
     file_type: str | None = None 
+    emotion_mode: bool = False # NEW: Toggle emotion mode
 
 class SleepRequest(BaseModel):
     session_id: str
@@ -100,6 +101,24 @@ def clean_text(text):
     text = text.replace('|', ' ')
     text = re.sub(r'^---+$', '', text, flags=re.MULTILINE)
     return text
+
+# --- NEW: EMOTION DETECTOR ---
+def detect_emotion(text):
+    lower = text.lower()
+    
+    # Basic keyword matching for MVP
+    if any(w in lower for w in ['sad', 'depressed', 'cry', 'hurt', 'loss', 'sorry', 'grief']):
+        return 'sad'
+    elif any(w in lower for w in ['angry', 'mad', 'furious', 'hate', 'stupid', 'annoying']):
+        return 'angry'
+    elif any(w in lower for w in ['happy', 'great', 'awesome', 'love', 'excited', 'good', 'wonderful', 'joy']):
+        return 'happy'
+    elif any(w in lower for w in ['wow', 'interesting', 'curious', 'wonder', 'what if', 'imagine']):
+        return 'curious'
+    elif any(w in lower for w in ['help', 'support', 'struggle', 'hard', 'difficult']):
+        return 'empathetic'
+    
+    return 'neutral'
 
 @app.get("/")
 def serve_frontend():
@@ -200,9 +219,10 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     def stream_generator():
         full_reply = ""
         try:
-            yield json.dumps({"type": "meta", "chat_id": chat_id, "tiredness": user.tiredness}) + "\n"
+            # Send metadata including emotion if mode is on
+            emotion = detect_emotion(request.message) if request.emotion_mode else 'neutral'
+            yield json.dumps({"type": "meta", "chat_id": chat_id, "tiredness": user.tiredness, "emotion": emotion}) + "\n"
             
-            # Simulate system 2 thinking states
             yield json.dumps({"type": "status", "text": "Analyzing context..."}) + "\n"
             
             response = client.chat.completions.create(
