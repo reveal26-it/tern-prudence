@@ -102,37 +102,10 @@ def clean_text(text):
     text = re.sub(r'^---+$', '', text, flags=re.MULTILINE)
     return text
 
-# --- EMOTION DETECTOR (triune-guarded) ---
+# --- CONTEXTUAL EMOTION DETECTOR (Placeholder for now) ---
 def detect_emotion(text):
-    """
-    Detect the SPEAKER's emotional state, not the content they discuss.
-    Guards against substring matches, quoted content, and negation.
-    """
-    lower = text.lower()
-
-    # Strip quoted content — it's discussed, not felt.
-    stripped = re.sub(r'"[^"]*"', '', lower)
-    stripped = re.sub(r"'[^']*'", '', stripped)
-
-    # Strip negated phrases ("not sad", "don't feel angry")
-    stripped = re.sub(r"\bnot\s+\w+", '', stripped)
-    stripped = re.sub(r"\bdon'?t\s+\w+", '', stripped)
-
-    def has_word(words):
-        # Word-boundary match prevents substring false positives
-        return any(re.search(rf'\b{w}\b', stripped) for w in words)
-
-    if has_word(['sad', 'depressed', 'crying', 'grief', 'lonely', 'hopeless']):
-        return 'sad'
-    if has_word(['angry', 'furious', 'hate', 'stupid', 'annoying', 'frustrated']):
-        return 'angry'
-    if has_word(['happy', 'great', 'awesome', 'love', 'excited', 'wonderful', 'joy']):
-        return 'happy'
-    if has_word(['curious', 'wonder', 'fascinating', 'interesting']):
-        return 'curious'
-    if has_word(['struggling', 'overwhelmed', 'need help']):
-        return 'empathetic'
-
+    # We will build the LLM contextual version next. 
+    # For now, return neutral so it doesn't trigger falsely.
     return 'neutral'
 
 @app.get("/")
@@ -177,7 +150,8 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
         db.add(user)
         db.commit()
 
-    user.tiredness = min(100, user.tiredness + 2)
+    # Slower tiredness climb (+1 instead of +2)
+    user.tiredness = min(100, user.tiredness + 1)
     db.commit()
 
     chat_id = request.chat_id
@@ -234,7 +208,6 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     def stream_generator():
         full_reply = ""
         try:
-            # Send metadata including emotion if mode is on
             emotion = detect_emotion(request.message) if request.emotion_mode else 'neutral'
             yield json.dumps({"type": "meta", "chat_id": chat_id, "tiredness": user.tiredness, "emotion": emotion}) + "\n"
             
@@ -284,7 +257,7 @@ def delete_chat(chat_id: str, db: Session = Depends(get_db)):
 async def sleep_endpoint(request: SleepRequest, db: Session = Depends(get_db)):
     user = db.query(DBUser).filter(DBUser.session_id == request.session_id).first()
     if user:
-        user.tiredness = 5
+        user.tiredness = 0  # Resets tiredness to 0
         db.commit()
 
     if request.chat_id:
