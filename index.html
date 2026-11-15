@@ -266,4 +266,497 @@
         <div class="input-area" id="input-area">
             <label class="icon-btn" for="file-upload">📎</label>
             <input type="file" id="file-upload" accept="image/*, .pdf, .txt, .csv, .md" onchange="handleFileUpload(event)">
-            <button class="
+            <button class="icon-btn" id="mic-btn" onclick="toggleMic()">🎤</button>
+            <div class="file-preview" id="file-preview">File loaded</div>
+            
+            <input type="text" id="user-input" placeholder="Ask or tell me something..." autocomplete="off" onkeypress="handleKeyPress(event)">
+            
+            <button class="send-btn" id="send-btn" onclick="sendMessage()">↑</button>
+            <button class="stop-btn" id="stop-btn" onclick="stopGeneration()">🛑</button>
+        </div>
+    </div>
+
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const sharedChatId = urlParams.get('share');
+
+        let sessionId = localStorage.getItem("prudence_session_id");
+        if (!sessionId) {
+            sessionId = "user_" + Math.random().toString(36).substr(2, 9);
+            localStorage.setItem("prudence_session_id", sessionId);
+        }
+
+        let currentChatId = null;
+        let uploadedFileData = null; 
+        let uploadedFileType = null; 
+        let isGenerating = false;
+        let abortController = null;
+        let emotionMode = false;
+        let currentTiredness = 0; // Track state locally
+
+        const chatContainer = document.getElementById('chat-container');
+        const userInput = document.getElementById('user-input');
+        const chatList = document.getElementById('chat-list');
+        const filePreview = document.getElementById('file-preview');
+        const personaSelect = document.getElementById('persona-select');
+        const sendBtn = document.getElementById('send-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const welcomeScreen = document.getElementById('welcome-screen');
+        const emotionToggle = document.getElementById('emotion-toggle');
+
+        let isSpeakerOn = true;
+        let isRecording = false;
+        const micBtn = document.getElementById('mic-btn');
+        const speakerToggle = document.getElementById('speaker-toggle');
+        const synth = window.speechSynthesis;
+        
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        let recognition = null;
+
+        if (SpeechRecognition) {
+            recognition = new SpeechRecognition();
+            recognition.continuous = false; recognition.interimResults = false;
+            recognition.onstart = () => { isRecording = true; micBtn.classList.add('recording'); userInput.placeholder = "Listening..."; };
+            recognition.onresult = (event) => { userInput.value += event.results[0][0].transcript + " "; sendMessage(); };
+            recognition.onerror = () => stopRecording();
+            recognition.onend = () => stopRecording();
+        }
+
+        function toggleMic() {
+            if (!recognition) { alert("Voice dictation not supported in this browser."); return; }
+            if (isRecording) recognition.stop(); else recognition.start();
+        }
+        function stopRecording() { isRecording = false; micBtn.classList.remove('recording'); userInput.placeholder = "Ask or tell me something..."; }
+        function toggleSpeaker() { isSpeakerOn = !isSpeakerOn; speakerToggle.textContent = isSpeakerOn ? "🔊" : "🔇"; if (!isSpeakerOn) synth.cancel(); }
+        
+        function toggleEmotionMode() {
+            emotionMode = !emotionMode;
+            emotionToggle.classList.toggle('active', emotionMode);
+            emotionToggle.textContent = emotionMode ? '🎭 Emotions' : '🎭 Neutral';
+            updateStatus(currentTiredness, 'neutral'); // Re-evaluate colors immediately
+        }
+
+        function speakText(text) {
+            if (!isSpeakerOn) return;
+            synth.cancel();
+            const utterance = new SpeechSynthesisUtterance(text);
+            const voices = synth.getVoices();
+            const preferredVoices = ['Google US English', 'Samantha', 'Microsoft Aria Online', 'Microsoft Jenny Online', 'Google UK English Female'];
+            let selectedVoice = null;
+            for (let name of preferredVoices) {
+                selectedVoice = voices.find(v => v.name.includes(name));
+                if (selectedVoice) break;
+            }
+            if (!selectedVoice) selectedVoice = voices.find(v => v.lang.startsWith('en'));
+            if (selectedVoice) utterance.voice = selectedVoice;
+            utterance.rate = 1.05; 
+            synth.speak(utterance);
+        }
+
+        window.onload = () => {
+            if (sharedChatId) {
+                loadSharedChat(sharedChatId);
+            } else {
+                document.getElementById('share-btn').style.display = 'inline-block';
+                document.getElementById('export-btn').style.display = 'inline-block';
+                loadChatList();
+            }
+            if (speechSynthesis.onvoiceschanged !== undefined) synth.onvoiceschanged = () => synth.getVoices();
+        };
+
+        function hideWelcomeScreen() {
+            if (!welcomeScreen.classList.contains('hidden')) {
+                welcomeScreen.classList.add('hidden');
+            }
+        }
+
+        function useSuggestion(text) {
+            userInput.value = text;
+            userInput.focus();
+            hideWelcomeScreen();
+        }
+
+        async function loadSharedChat(chatId) {
+            hideWelcomeScreen();
+            document.getElementById('sidebar').style.display = 'none';
+            document.getElementById('input-area').style.display = 'none';
+            document.getElementById('header-controls').innerHTML = '<div class="status-badge" style="color:var(--teal-main);">Read-Only Shared Chat</div>';
+
+            try {
+                const res = await fetch(`/api/shared/${chatId}`);
+                if (!res.ok) throw new Error("Not found");
+                const data = await res.json();
+                chatContainer.innerHTML = `<div style="text-align:center; color:#a0b0b0; margin-bottom:20px;">Shared Conversation: <b>${data.title}</b></div>`;
+                data.messages.forEach(msg => { addMessage(msg.content, msg.role === 'assistant' ? 'prudence' : 'user'); });
+            } catch (e) {
+                chatContainer.innerHTML = '<div class="message prudence">This shared chat does not exist or is no longer public.</div>';
+            }
+        }
+
+        async function shareChat() {
+            if (!currentChatId) { alert("Start a chat first before sharing."); return; }
+            try {
+                const res = await fetch(`/api/chats/${currentChatId}/share`, { method: 'POST' });
+                const data = await res.json();
+                const shareUrl = `${window.location.origin}/?share=${currentChatId}`;
+                if (data.is_shared) {
+                    navigator.clipboard.writeText(shareUrl);
+                    alert(`Chat is now public! Link copied to clipboard:\n\n${shareUrl}`);
+                } else alert("Chat is no longer public.");
+            } catch (e) { console.error(e); }
+        }
+
+        function exportChat() {
+            const messages = document.querySelectorAll('.message');
+            if (messages.length === 0) return;
+            let text = "Prudence Conversation Export\n===========================\n\n";
+            messages.forEach(msg => { text += `${msg.classList.contains('user') ? 'User' : 'Prudence'}:\n${msg.textContent}\n\n`; });
+            const blob = new Blob([text], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = `prudence_chat_${Date.now()}.txt`; a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); }
+
+        async function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            hideWelcomeScreen();
+            filePreview.style.display = 'inline-block';
+            filePreview.textContent = `Reading ${file.name}...`;
+            uploadedFileData = null; uploadedFileType = null;
+
+            try {
+                if (file.type.startsWith("image/")) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => { uploadedFileData = e.target.result.split(',')[1]; uploadedFileType = 'image'; filePreview.textContent = `🖼️ ${file.name}`; };
+                    reader.readAsDataURL(file);
+                } 
+                else if (file.type === "application/pdf") {
+                    const arrayBuffer = await file.arrayBuffer();
+                    const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+                    let text = "";
+                    for (let i = 1; i <= pdf.numPages; i++) {
+                        const page = await pdf.getPage(i);
+                        const content = await page.getTextContent();
+                        text += content.items.map(item => item.str).join(" ") + "\n";
+                    }
+                    if (text.trim().length < 10) {
+                        filePreview.textContent = `Scanning PDF...`;
+                        const page = await pdf.getPage(1);
+                        const viewport = page.getViewport({ scale: 1.5 });
+                        const canvas = document.createElement('canvas');
+                        const context = canvas.getContext('2d');
+                        canvas.height = viewport.height; canvas.width = viewport.width;
+                        await page.render({ canvasContext: context, viewport: viewport }).promise;
+                        uploadedFileData = canvas.toDataURL('image/jpeg').split(',')[1]; uploadedFileType = 'image'; filePreview.textContent = `🖼️ ${file.name}`;
+                    } else { uploadedFileData = text; uploadedFileType = 'text'; filePreview.textContent = `📄 ${file.name}`; }
+                } 
+                else { uploadedFileData = await file.text(); uploadedFileType = 'text'; filePreview.textContent = `📄 ${file.name}`; }
+            } catch (err) { filePreview.textContent = "Error reading file"; }
+        }
+
+        async function loadChatList() {
+            try {
+                const res = await fetch(`/api/chats/${sessionId}`);
+                const chats = await res.json();
+                chatList.innerHTML = '';
+                chats.forEach(chat => {
+                    const div = document.createElement('div');
+                    div.className = `chat-item ${chat.id === currentChatId ? 'active' : ''}`;
+                    const titleSpan = document.createElement('span');
+                    titleSpan.className = 'chat-title';
+                    titleSpan.textContent = chat.title;
+                    titleSpan.ondblclick = (e) => { e.stopPropagation(); renameChat(chat.id, chat.title); };
+                    
+                    const optBtn = document.createElement('button');
+                    optBtn.className = 'options-btn'; optBtn.innerHTML = '⋮';
+                    
+                    const dropdown = document.createElement('div');
+                    dropdown.className = 'dropdown';
+                    
+                    const renameBtn = document.createElement('button');
+                    renameBtn.textContent = 'Rename'; renameBtn.onclick = (e) => { e.stopPropagation(); renameChat(chat.id, chat.title); };
+                    
+                    const deleteBtn = document.createElement('button');
+                    deleteBtn.className = 'delete'; deleteBtn.textContent = 'Delete'; deleteBtn.onclick = (e) => { e.stopPropagation(); deleteChat(chat.id); };
+                    
+                    dropdown.appendChild(renameBtn); dropdown.appendChild(deleteBtn);
+                    div.appendChild(titleSpan); div.appendChild(optBtn); div.appendChild(dropdown);
+
+                    div.onclick = () => loadChat(chat.id);
+                    optBtn.onclick = (e) => { e.stopPropagation(); document.querySelectorAll('.dropdown').forEach(d => d.classList.remove('show')); dropdown.classList.toggle('show'); };
+                    chatList.appendChild(div);
+                });
+            } catch (e) { console.error(e); }
+        }
+
+        document.addEventListener('click', () => { document.querySelectorAll('.dropdown').forEach(d => d.classList.remove('show')); });
+
+        async function loadChat(chatId) {
+            hideWelcomeScreen();
+            currentChatId = chatId;
+            chatContainer.innerHTML = ''; 
+            try {
+                const res = await fetch(`/api/chat/${chatId}`);
+                const messages = await res.json();
+                messages.forEach(msg => { addMessage(msg.content, msg.role === 'assistant' ? 'prudence' : 'user'); });
+                loadChatList(); 
+                if(window.innerWidth <= 768) toggleSidebar();
+            } catch (e) { console.error(e); }
+        }
+
+        async function renameChat(chatId, currentTitle) {
+            const newTitle = prompt("Enter new chat name:", currentTitle);
+            if (newTitle && newTitle.trim() !== "") {
+                try { await fetch(`/api/chats/${chatId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: newTitle }) }); loadChatList(); } catch (e) { console.error(e); }
+            }
+        }
+
+        async function deleteChat(chatId) {
+            if (confirm("Are you sure you want to delete this chat?")) {
+                try { await fetch(`/api/chats/${chatId}`, { method: 'DELETE' }); if (currentChatId === chatId) startNewChat(); loadChatList(); } catch (e) { console.error(e); }
+            }
+        }
+
+        async function startNewChat() {
+            currentChatId = null; uploadedFileData = null; uploadedFileType = null;
+            filePreview.style.display = 'none'; document.getElementById('file-upload').value = '';
+            chatContainer.innerHTML = ''; 
+            welcomeScreen.classList.remove('hidden');
+            
+            try {
+                // Triggers sleep, which resets tiredness to 0 on the backend
+                await fetch('/api/sleep', { 
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, 
+                    body: JSON.stringify({ session_id: sessionId, chat_id: currentChatId }) 
+                });
+                updateStatus(0, 'neutral'); 
+            } catch (error) { console.error(error); }
+
+            if(window.innerWidth <= 768) document.getElementById('sidebar').classList.remove('open');
+        }
+
+        function handleKeyPress(e) { if (e.key === 'Enter') sendMessage(); }
+
+        function addMessage(text, role) {
+            const div = document.createElement('div');
+            div.className = `message ${role}`;
+            
+            if (role === 'prudence') {
+                const thoughtProcess = document.createElement('div');
+                thoughtProcess.className = 'thought-process';
+                thoughtProcess.textContent = 'Analyzing context...';
+                div.appendChild(thoughtProcess);
+            }
+            
+            if (text.includes("```")) {
+                const parts = text.split("```");
+                parts.forEach((part, index) => {
+                    if (index % 2 === 1) {
+                        const pre = document.createElement('pre');
+                        const code = document.createElement('code');
+                        code.textContent = part.trim();
+                        pre.appendChild(code);
+                        
+                        const copyBtn = document.createElement('button');
+                        copyBtn.className = 'copy-code-btn';
+                        copyBtn.textContent = 'Copy';
+                        copyBtn.onclick = () => {
+                            navigator.clipboard.writeText(part.trim());
+                            copyBtn.textContent = 'Copied!';
+                            setTimeout(() => copyBtn.textContent = 'Copy', 2000);
+                        };
+                        pre.appendChild(copyBtn);
+                        div.appendChild(pre);
+                    } else {
+                        div.appendChild(document.createTextNode(part));
+                    }
+                });
+            } else {
+                div.appendChild(document.createTextNode(text));
+            }
+
+            chatContainer.appendChild(div);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+            return div;
+        }
+
+        function stopGeneration() {
+            if (abortController) {
+                abortController.abort();
+                isGenerating = false;
+                sendBtn.style.display = 'flex';
+                stopBtn.style.display = 'none';
+            }
+        }
+
+        async function sendMessage() {
+            hideWelcomeScreen();
+            const text = userInput.value.trim();
+            if ((!text && !uploadedFileData) || isGenerating) return;
+
+            const displayMsg = text || "Please analyze this.";
+            addMessage(displayMsg, 'user');
+            userInput.value = '';
+
+            const prudenceDiv = addMessage('', 'prudence');
+            const thoughtProcess = prudenceDiv.querySelector('.thought-process');
+            let fullReply = '';
+
+            abortController = new AbortController();
+            isGenerating = true;
+            sendBtn.style.display = 'none';
+            stopBtn.style.display = 'flex';
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    signal: abortController.signal,
+                    body: JSON.stringify({ 
+                        session_id: sessionId,
+                        chat_id: currentChatId,
+                        message: displayMsg,
+                        persona: personaSelect.value,
+                        file_data: uploadedFileData,
+                        file_type: uploadedFileType,
+                        emotion_mode: emotionMode
+                    })
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder("utf-8");
+                let buffer = '';
+                let hasStartedTyping = false;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop(); 
+
+                    for (const line of lines) {
+                        if (!line.trim()) continue;
+                        try {
+                            const data = JSON.parse(line);
+                            if (data.type === 'meta') {
+                                if (!currentChatId) {
+                                    currentChatId = data.chat_id;
+                                    loadChatList();
+                                }
+                                currentTiredness = data.tiredness;
+                                updateStatus(data.tiredness, data.emotion);
+                            } else if (data.type === 'status') {
+                                thoughtProcess.textContent = data.text;
+                                thoughtProcess.style.display = 'block';
+                            } else if (data.type === 'chunk') {
+                                if (!hasStartedTyping) {
+                                    hasStartedTyping = true;
+                                    thoughtProcess.style.display = 'none';
+                                }
+                                fullReply += data.text;
+                                prudenceDiv.childNodes[prudenceDiv.childNodes.length - 1].textContent = fullReply;
+                                chatContainer.scrollTop = chatContainer.scrollHeight;
+                            } else if (data.type === 'error') {
+                                thoughtProcess.style.display = 'none';
+                                prudenceDiv.textContent = "Error: " + data.text;
+                            }
+                        } catch(e) {}
+                    }
+                }
+                
+                prudenceDiv.innerHTML = '';
+                const formatted = document.createElement('div');
+                formatted.innerHTML = fullReply.replace(/```([\s\S]*?)```/g, (match, code) => {
+                    return `<pre><code>${code.trim()}</code><button class="copy-code-btn" onclick="navigator.clipboard.writeText(this.previousElementSibling.innerText); this.innerText='Copied!'; setTimeout(()=>this.innerText='Copy',2000)">Copy</button></pre>`;
+                });
+                prudenceDiv.appendChild(formatted);
+
+                speakText(fullReply);
+
+                uploadedFileData = null; uploadedFileType = null;
+                filePreview.style.display = 'none'; document.getElementById('file-upload').value = '';
+
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    prudenceDiv.textContent += " [Stopped by user]";
+                } else {
+                    prudenceDiv.textContent = "Connection failed.";
+                }
+            } finally {
+                isGenerating = false;
+                sendBtn.style.display = 'flex';
+                stopBtn.style.display = 'none';
+            }
+        }
+
+        async function sleep() {
+            try {
+                await fetch('/api/sleep', { 
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, 
+                    body: JSON.stringify({ session_id: sessionId, chat_id: currentChatId }) 
+                });
+                updateStatus(0, 'neutral'); 
+                currentTiredness = 0;
+                addMessage("I feel refreshed. I've consolidated our conversation into my long-term memory. What's next?", "prudence");
+            } catch (error) { console.error(error); }
+        }
+
+        // --- THE HIERARCHY: TIREDNESS OVERRIDES EMOTION ---
+        function updateStatus(tiredness, emotion = 'neutral') {
+            const dot = document.getElementById('status-dot');
+            const text = document.getElementById('status-text');
+            const root = document.documentElement;
+            currentTiredness = tiredness;
+
+            // 90-100%: Exhausted (Deep Red) - Overrides Emotion
+            if (tiredness >= 90) {
+                text.textContent = `Exhausted (${tiredness}%)`;
+                setThemeColors('exhausted', false);
+            } 
+            // 50-89%: Tired (Amber) - Overrides Emotion
+            else if (tiredness >= 50) {
+                text.textContent = `Tired (${tiredness}%)`;
+                setThemeColors('tired', false);
+            } 
+            // 0-49%: Awake (Teal/Emotion)
+            else {
+                if (emotionMode && emotion !== 'neutral') {
+                    text.textContent = `Emotion: ${emotion}`;
+                    setThemeColors(emotion, true);
+                } else {
+                    text.textContent = `Awake (${tiredness}%)`;
+                    setThemeColors('awake', false);
+                }
+            }
+        }
+
+        function setThemeColors(state, isEmotion) {
+            const root = document.documentElement;
+            
+            if (isEmotion) {
+                switch(state) {
+                    case 'happy': root.style.setProperty('--teal-main', '#ffd700'); root.style.setProperty('--teal-mid', '#daa520'); root.style.setProperty('--teal-deep', '#b8860b'); break;
+                    case 'sad': root.style.setProperty('--teal-main', '#4a90e2'); root.style.setProperty('--teal-mid', '#357abd'); root.style.setProperty('--teal-deep', '#1c5a8a'); break;
+                    case 'angry': root.style.setProperty('--teal-main', '#ff4444'); root.style.setProperty('--teal-mid', '#cc0000'); root.style.setProperty('--teal-deep', '#800000'); break;
+                    case 'curious': root.style.setProperty('--teal-main', '#9b59b6'); root.style.setProperty('--teal-mid', '#8e44ad'); root.style.setProperty('--teal-deep', '#6c3483'); break;
+                    case 'empathetic': root.style.setProperty('--teal-main', '#ff69b4'); root.style.setProperty('--teal-mid', '#db7093'); root.style.setProperty('--teal-deep', '#c71585'); break;
+                }
+            } else {
+                switch(state) {
+                    case 'awake': root.style.setProperty('--teal-main', '#00d4aa'); root.style.setProperty('--teal-mid', '#00a88a'); root.style.setProperty('--teal-deep', '#007a66'); break;
+                    case 'tired': root.style.setProperty('--teal-main', '#f39c12'); root.style.setProperty('--teal-mid', '#d68910'); root.style.setProperty('--teal-deep', '#a04000'); break;
+                    case 'exhausted': root.style.setProperty('--teal-main', '#ff4444'); root.style.setProperty('--teal-mid', '#cc0000'); root.style.setProperty('--teal-deep', '#660000'); break;
+                }
+            }
+        }
+    </script>
+</body>
+</html>
