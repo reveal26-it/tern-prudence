@@ -294,7 +294,7 @@
         let isGenerating = false;
         let abortController = null;
         let emotionMode = false;
-        let currentTiredness = 0; // Track state locally
+        let currentTiredness = 0; 
 
         const chatContainer = document.getElementById('chat-container');
         const userInput = document.getElementById('user-input');
@@ -335,7 +335,7 @@
             emotionMode = !emotionMode;
             emotionToggle.classList.toggle('active', emotionMode);
             emotionToggle.textContent = emotionMode ? '🎭 Emotions' : '🎭 Neutral';
-            updateStatus(currentTiredness, 'neutral'); // Re-evaluate colors immediately
+            updateStatus(currentTiredness, 'neutral'); 
         }
 
         function speakText(text) {
@@ -530,7 +530,6 @@
             welcomeScreen.classList.remove('hidden');
             
             try {
-                // Triggers sleep, which resets tiredness to 0 on the backend
                 await fetch('/api/sleep', { 
                     method: 'POST', headers: { 'Content-Type': 'application/json' }, 
                     body: JSON.stringify({ session_id: sessionId, chat_id: currentChatId }) 
@@ -716,12 +715,12 @@
             const root = document.documentElement;
             currentTiredness = tiredness;
 
-            // 90-100%: Exhausted (Deep Red) - Overrides Emotion
+            // 90-100%: Exhausted (Deep Red)
             if (tiredness >= 90) {
                 text.textContent = `Exhausted (${tiredness}%)`;
                 setThemeColors('exhausted', false);
             } 
-            // 50-89%: Tired (Amber) - Overrides Emotion
+            // 50-89%: Tired (Amber)
             else if (tiredness >= 50) {
                 text.textContent = `Tired (${tiredness}%)`;
                 setThemeColors('tired', false);
