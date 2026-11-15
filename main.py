@@ -102,10 +102,8 @@ def clean_text(text):
     text = re.sub(r'^---+$', '', text, flags=re.MULTILINE)
     return text
 
-# --- CONTEXTUAL EMOTION DETECTOR (Placeholder for now) ---
+# --- CONTEXTUAL EMOTION DETECTOR (Placeholder for next phase) ---
 def detect_emotion(text):
-    # We will build the LLM contextual version next. 
-    # For now, return neutral so it doesn't trigger falsely.
     return 'neutral'
 
 @app.get("/")
@@ -150,7 +148,7 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
         db.add(user)
         db.commit()
 
-    # Slower tiredness climb (+1 instead of +2)
+    # +1 per message
     user.tiredness = min(100, user.tiredness + 1)
     db.commit()
 
